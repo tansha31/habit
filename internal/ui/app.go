@@ -60,6 +60,7 @@ type App struct {
 	day   domain.Day
 
 	tab      Tab
+	dash     dashModel
 	overlays []Overlay
 
 	theme  theme.Theme
@@ -71,7 +72,9 @@ type App struct {
 	toastGen  int
 
 	w, h    int
+	tabX    [3][2]int // header x-ranges of the tab labels, for mouse
 	changes <-chan struct{}
+	mutCh   chan<- func()
 }
 
 // Run starts the TUI over an already-open store.
@@ -81,17 +84,41 @@ func Run(s *store.Store) error {
 		return err
 	}
 	defer closeWatch()
+	// All mutations flow through one FIFO worker: concurrent tea.Cmd
+	// goroutines could otherwise commit rapid keystrokes out of order.
+	mutCh := make(chan func(), 64)
+	defer close(mutCh)
+	go func() {
+		for f := range mutCh {
+			f()
+		}
+	}()
 	app := &App{
-		store:  s,
-		day:    s.Today(),
-		theme:  theme.Default(),
-		gl:     theme.GlyphSet(theme.ASCIIOnly()),
-		border: theme.Border("rounded"),
-		keys:   Keys,
+		store:   s,
+		day:     s.Today(),
+		theme:   theme.Default(),
+		gl:      theme.GlyphSet(theme.ASCIIOnly()),
+		border:  theme.Border("rounded"),
+		keys:    Keys,
 		changes: changes,
+		mutCh:   mutCh,
 	}
 	_, err = tea.NewProgram(app).Run()
 	return err
+}
+
+// mutate queues a store mutation in keystroke order; errors surface as a
+// toast and the fsnotify reload restores the model to DB truth.
+func (a *App) mutate(f func(s *store.Store) error) tea.Cmd {
+	s, ch := a.store, a.mutCh
+	return func() tea.Msg {
+		done := make(chan error, 1)
+		ch <- func() { done <- f(s) }
+		if err := <-done; err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
 }
 
 // watchDB emits on any write to the database files (WAL included), so a CLI
@@ -206,6 +233,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapMsg:
 		a.snap = msg.snap
 		a.day = msg.snap.Today
+		a.dash.rebuild(a)
 		return a, nil
 
 	case storeChangedMsg:
@@ -242,6 +270,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return a.handleKey(msg)
+
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft && len(a.overlays) == 0 {
+			return a, a.handleClick(msg.Mouse().X, msg.Mouse().Y)
+		}
+		return a, nil
 	}
 
 	// Anything else goes to the top overlay, if one is open.
@@ -291,8 +325,47 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, a.undoCmd(true)
 	case key.Matches(msg, k.Palette):
 		return a, a.Toast(a.theme.Dim.Render("command palette arrives in M6"))
+	default:
+		if a.tab == TabDashboard {
+			return a, a.dash.handleKey(msg, a)
+		}
 	}
 	return a, nil
+}
+
+// handleClick: tabs on the header row; dashboard rows select, a click on
+// the glyph cell toggles (§4.2 — mouse never advertised, always accepted).
+func (a *App) handleClick(x, y int) tea.Cmd {
+	if y == 0 {
+		for i, r := range a.tabX {
+			if x >= r[0] && x < r[1] {
+				a.tab = Tab(i)
+				return nil
+			}
+		}
+		return nil
+	}
+	if a.tab != TabDashboard {
+		return nil
+	}
+	d := &a.dash
+	if v, ok := d.rowLines[y-2]; ok { // body starts under the 2-line header
+		d.selG, d.selR = v[0], v[1]
+		if v[1] == -1 { // group header: click toggles collapse
+			gid := d.groups[v[0]].g.ID
+			if d.collapsed[gid] {
+				delete(d.collapsed, gid)
+				d.selR = 0
+			} else {
+				d.collapsed[gid] = true
+			}
+			return nil
+		}
+		if x >= 5 && x <= 6 { // status glyph cell
+			return d.toggle(a)
+		}
+	}
+	return nil
 }
 
 func (a *App) View() tea.View {
@@ -329,6 +402,7 @@ func (a *App) headerView() string {
 	row := "  " + th.Accent.Render(gl.Logo) + " habit          "
 	underline := strings.Repeat(" ", lipgloss.Width(row))
 	for i, name := range tabNames {
+		a.tabX[i] = [2]int{lipgloss.Width(row), lipgloss.Width(row) + len(name)}
 		if Tab(i) == a.tab {
 			row += th.Text.Render(name)
 			underline += th.Accent.Render(strings.Repeat(gl.TabRule, lipgloss.Width(name)))
@@ -384,28 +458,7 @@ func (a *App) tabView() string {
 		if a.snap == nil {
 			return "\n   " + th.Dim.Render("loading…")
 		}
-		done, total := 0, 0
-		for _, h := range a.snap.Habits {
-			if h.Paused() {
-				continue
-			}
-			total++
-			for _, e := range a.snap.Entries {
-				if e.HabitID == h.ID && e.Day == a.snap.Today && e.Status == domain.StatusDone {
-					done++
-				}
-			}
-		}
-		frac := 0.0
-		if total > 0 {
-			frac = float64(done) / float64(total)
-		}
-		bar := th.Accent.Render(widgets.Bar(frac, 21, a.gl.BarOn, a.gl.BarOff))
-		line := fmt.Sprintf("\n   Today · %d of %d   %s  %2.0f%%", done, total, bar, frac*100)
-		if a.snap.Freeze > 0 {
-			line += fmt.Sprintf("   %s %d", th.Freeze.Render(a.gl.Freeze), a.snap.Freeze)
-		}
-		return line + "\n\n   " + th.Dim.Render("full dashboard arrives in M5")
+		return a.dash.view(a)
 	case TabAnalytics:
 		return "\n   " + th.Dim.Render("analytics arrive in M7")
 	default:
