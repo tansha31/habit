@@ -402,6 +402,11 @@ func entryQ(q dbq, habitID int64, day domain.Day) (*domain.Entry, error) {
 	return &es[0], nil
 }
 
+// Entry returns one habit-day entry, or nil, nil when absent.
+func (s *Store) Entry(habitID int64, day domain.Day) (*domain.Entry, error) {
+	return entryQ(s.db, habitID, day)
+}
+
 func freezeBalanceQ(q dbq) (int, error) {
 	var n int
 	err := q.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM freeze_ledger`).Scan(&n)

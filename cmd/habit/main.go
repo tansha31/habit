@@ -1,7 +1,21 @@
 package main
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"os"
+
+	"habit/internal/cli"
+)
 
 func main() {
-	fmt.Println("habit: nothing here yet — see docs/habit-tui-design-spec.md")
+	if err := cli.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "habit:", err)
+		code := 1
+		var ec interface{ ExitCode() int }
+		if errors.As(err, &ec) {
+			code = ec.ExitCode()
+		}
+		os.Exit(code)
+	}
 }
