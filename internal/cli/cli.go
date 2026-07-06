@@ -14,6 +14,7 @@ import (
 
 	"habit/internal/domain"
 	"habit/internal/store"
+	"habit/internal/ui"
 )
 
 // exitErr carries a process exit code: 2 = unknown slug (spec §8).
@@ -32,8 +33,12 @@ func Execute() error {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("TUI arrives in milestone M4 — try `habit --help` meanwhile.")
-			return nil
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			return ui.Run(s)
 		},
 	}
 	root.CompletionOptions.DisableDefaultCmd = true

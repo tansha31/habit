@@ -104,8 +104,9 @@ type Opts struct {
 }
 
 type Store struct {
-	db  *sql.DB
-	opt Opts
+	db   *sql.DB
+	opt  Opts
+	path string
 }
 
 // DefaultPath honors HABIT_DB, else the spec location in Application Support.
@@ -132,7 +133,7 @@ func Open(path string, opt Opts) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, opt: opt}
+	s := &Store{db: db, opt: opt, path: path}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -141,6 +142,7 @@ func Open(path string, opt Opts) (*Store, error) {
 }
 
 func (s *Store) Close() error      { return s.db.Close() }
+func (s *Store) Path() string      { return s.path }
 func (s *Store) Opt() Opts         { return s.opt }
 func (s *Store) Today() domain.Day { return domain.LogicalDay(time.Now(), s.opt.RolloverHour) }
 
