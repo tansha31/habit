@@ -54,6 +54,13 @@ func Rule(title, right string, width int, line string, dim lipgloss.Style) strin
 	return title + " " + dim.Render(strings.Repeat(line, fill)) + " " + right
 }
 
+// StampTitle splices a title into a box's top border at column x:
+// ╭─ New Habit ─────╮
+func StampTitle(topBorder, title string, x int) string {
+	w := lipgloss.Width(title)
+	return ansi.Truncate(topBorder, x, "") + title + ansi.TruncateLeft(topBorder, x+w, "")
+}
+
 // Shadowed adds a drop shadow to a bordered box: ░ down the right edge
 // (from the second line) and along the bottom, offset one cell (§3.2).
 func Shadowed(box string, shadow string, style lipgloss.Style) string {

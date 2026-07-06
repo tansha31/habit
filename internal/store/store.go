@@ -404,6 +404,11 @@ func entryQ(q dbq, habitID int64, day domain.Day) (*domain.Entry, error) {
 	return &es[0], nil
 }
 
+// MetaGet / MetaSet expose the meta key-value table for non-journaled app
+// state (frecency, UI prefs). Not undoable by design.
+func (s *Store) MetaGet(key string) string           { return metaGet(s.db, key) }
+func (s *Store) MetaSet(key, value string) error     { return metaSet(s.db, key, value) }
+
 // Entry returns one habit-day entry, or nil, nil when absent.
 func (s *Store) Entry(habitID int64, day domain.Day) (*domain.Entry, error) {
 	return entryQ(s.db, habitID, day)

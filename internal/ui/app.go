@@ -72,7 +72,8 @@ type App struct {
 	toastGen  int
 
 	w, h    int
-	tabX    [3][2]int // header x-ranges of the tab labels, for mouse
+	tabX    [3][2]int  // header x-ranges of the tab labels, for mouse
+	gotoDay domain.Day // day-detail target from @date palette (M7 consumes)
 	changes <-chan struct{}
 	mutCh   chan<- func()
 }
@@ -251,6 +252,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case toastMsg:
+		return a, a.Toast(msg.text)
+
 	case undoneMsg:
 		switch {
 		case errors.Is(msg.err, store.ErrNothingToUndo), errors.Is(msg.err, store.ErrNothingToRedo):
@@ -324,7 +328,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Redo):
 		return a, a.undoCmd(true)
 	case key.Matches(msg, k.Palette):
-		return a, a.Toast(a.theme.Dim.Render("command palette arrives in M6"))
+		a.overlays = append(a.overlays, newPalette(a))
 	default:
 		if a.tab == TabDashboard {
 			return a, a.dash.handleKey(msg, a)

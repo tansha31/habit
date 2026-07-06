@@ -60,8 +60,9 @@ type dashModel struct {
 	groups     []dashGroup
 	collapsed  map[int64]bool
 	selG, selR int
-	pending    rune // half of a dd / gg chord
-	booted     bool // launch focus + auto-collapse applied once
+	pending    rune           // half of a dd / gg chord
+	booted     bool           // launch focus + auto-collapse applied once
+	filterTag  string         // # palette filter; esc clears (§4.3)
 	rowLines   map[int][2]int // render line → (group, row) for mouse
 }
 
@@ -90,7 +91,7 @@ func (d *dashModel) rebuild(a *App) {
 	for _, g := range snap.Groups {
 		dg := dashGroup{g: g}
 		for _, h := range snap.Habits {
-			if h.GroupID != g.ID {
+			if h.GroupID != g.ID || (d.filterTag != "" && !hasTag(h, d.filterTag)) {
 				continue
 			}
 			r := dashRow{h: h, streak: snap.Streaks[h.ID], spark: make([]float64, 14)}
@@ -135,6 +136,29 @@ func (d *dashModel) rebuild(a *App) {
 		}
 	}
 	d.clampSelection()
+}
+
+func hasTag(h domain.Habit, tag string) bool {
+	for _, t := range h.Tags {
+		if t == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// selectHabit moves the selection to a habit by ID, expanding its group.
+func (d *dashModel) selectHabit(id int64) bool {
+	for gi := range d.groups {
+		for ri := range d.groups[gi].rows {
+			if d.groups[gi].rows[ri].h.ID == id {
+				delete(d.collapsed, d.groups[gi].g.ID)
+				d.selG, d.selR = gi, ri
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // focusLaunch: current time-of-day group, first incomplete habit (§1.1).
@@ -316,8 +340,19 @@ func (d *dashModel) handleKey(msg tea.KeyPressMsg, a *App) tea.Cmd {
 		return d.reorder(a, 1)
 	case key.Matches(msg, k.MoveUp):
 		return d.reorder(a, -1)
-	case key.Matches(msg, k.New), key.Matches(msg, k.Edit):
-		return a.Toast(a.theme.Dim.Render("habit editor arrives in M6"))
+	case key.Matches(msg, k.New):
+		a.overlays = append(a.overlays, newEditor(a, nil))
+	case key.Matches(msg, k.Edit):
+		if r != nil {
+			h := r.h
+			a.overlays = append(a.overlays, newEditor(a, &h))
+		}
+	case key.Matches(msg, k.Esc):
+		if d.filterTag != "" {
+			d.filterTag = ""
+			d.rebuild(a)
+			return a.Toast(a.theme.Dim.Render("filter cleared"))
+		}
 	}
 	return nil
 }
@@ -526,6 +561,9 @@ func (d *dashModel) view(a *App) string {
 	}
 	summary := fmt.Sprintf("   Today · %d of %d   %s  %2.0f%%",
 		done, total, th.Accent.Render(widgets.Bar(frac, 21, gl.BarOn, gl.BarOff)), frac*100)
+	if d.filterTag != "" {
+		summary += "   " + th.Accent.Render("#"+d.filterTag)
+	}
 	freeze := ""
 	if a.snap.Freeze > 0 {
 		freeze = fmt.Sprintf("%s %d", th.Freeze.Render(gl.Freeze), a.snap.Freeze)
