@@ -1,0 +1,27 @@
+# Binaries
+/habit
+/habitd
+/dist/
+*.test
+
+# Go
+/vendor/
+
+# SQLite (local dev databases + WAL/SHM sidecars)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Agent / AI-assistant artifacts (kept locally, untracked)
+.claude/
+CLAUDE.md
+docs/
