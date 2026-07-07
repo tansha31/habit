@@ -194,9 +194,7 @@ func (p *paletteOverlay) dateItems(a *App, q string) []palItem {
 	}
 	label := fmt.Sprintf("open %s in Analytics", day.Time().Format("Mon · Jan 2 2006"))
 	return []palItem{{a.gl.Focus, label, "", "", func(a *App) tea.Cmd {
-		a.gotoDay = day
-		a.tab = TabAnalytics
-		return a.Toast(a.theme.Dim.Render("day detail arrives in M7"))
+		return a.openAnalytics(day)
 	}}}
 }
 

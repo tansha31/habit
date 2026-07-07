@@ -61,6 +61,7 @@ type App struct {
 
 	tab      Tab
 	dash     dashModel
+	ana      anaModel
 	overlays []Overlay
 
 	theme  theme.Theme
@@ -72,8 +73,7 @@ type App struct {
 	toastGen  int
 
 	w, h    int
-	tabX    [3][2]int  // header x-ranges of the tab labels, for mouse
-	gotoDay domain.Day // day-detail target from @date palette (M7 consumes)
+	tabX    [3][2]int // header x-ranges of the tab labels, for mouse
 	changes <-chan struct{}
 	mutCh   chan<- func()
 }
@@ -238,7 +238,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case storeChangedMsg:
-		return a, tea.Batch(a.loadSnap(), waitChange(a.changes))
+		cmds := []tea.Cmd{a.loadSnap(), waitChange(a.changes)}
+		if a.ana.loadedYear != 0 {
+			a.ana.loadedYear = 0 // stale; reload lazily
+			if a.tab == TabAnalytics {
+				cmds = append(cmds, a.ana.ensure(a))
+			}
+		}
+		return a, tea.Batch(cmds...)
+
+	case anaMsg:
+		a.ana.habits, a.ana.entries, a.ana.loadedYear = msg.habits, msg.entries, msg.year
+		if a.ana.pendingDetail {
+			a.ana.pendingDetail = false
+			a.overlays = append(a.overlays, newDayDetail(a, a.ana.selDay))
+		}
+		return a, nil
 
 	case minuteMsg:
 		if a.store.Today() != a.day {
@@ -315,12 +330,19 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.tab = TabDashboard
 	case key.Matches(msg, k.Tab2):
 		a.tab = TabAnalytics
+		return a, a.ana.ensure(a)
 	case key.Matches(msg, k.Tab3):
 		a.tab = TabSettings
 	case key.Matches(msg, k.NextTab):
 		a.tab = (a.tab + 1) % 3
+		if a.tab == TabAnalytics {
+			return a, a.ana.ensure(a)
+		}
 	case key.Matches(msg, k.PrevTab):
 		a.tab = (a.tab + 2) % 3
+		if a.tab == TabAnalytics {
+			return a, a.ana.ensure(a)
+		}
 	case key.Matches(msg, k.Help):
 		a.overlays = append(a.overlays, helpOverlay{})
 	case key.Matches(msg, k.Undo):
@@ -330,8 +352,11 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Palette):
 		a.overlays = append(a.overlays, newPalette(a))
 	default:
-		if a.tab == TabDashboard {
+		switch a.tab {
+		case TabDashboard:
 			return a, a.dash.handleKey(msg, a)
+		case TabAnalytics:
+			return a, a.ana.handleKey(msg, a)
 		}
 	}
 	return a, nil
@@ -348,6 +373,9 @@ func (a *App) handleClick(x, y int) tea.Cmd {
 			}
 		}
 		return nil
+	}
+	if a.tab == TabAnalytics {
+		return a.ana.click(a, x, y)
 	}
 	if a.tab != TabDashboard {
 		return nil
@@ -464,7 +492,7 @@ func (a *App) tabView() string {
 		}
 		return a.dash.view(a)
 	case TabAnalytics:
-		return "\n   " + th.Dim.Render("analytics arrive in M7")
+		return a.ana.view(a)
 	default:
 		return "\n   " + th.Dim.Render("settings arrive in M8")
 	}
