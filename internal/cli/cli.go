@@ -43,7 +43,7 @@ func Execute() error {
 		},
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.AddCommand(doneCmd(), skipCmd(), undoCmd(), addCmd(), statusCmd(), exportCmd(), doctorCmd())
+	root.AddCommand(doneCmd(), skipCmd(), undoCmd(), addCmd(), statusCmd(), exportCmd(), doctorCmd(), daemonCmd())
 	return root.Execute()
 }
 

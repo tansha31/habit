@@ -142,6 +142,19 @@ func Open(path string, opt Opts) (*Store, error) {
 	return s, nil
 }
 
+// OpenRO opens the database read-only — habitd's only access path (§9:
+// "the agent can never corrupt state"). No migration, no finalization.
+func OpenRO(path string, opt Opts) (*Store, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	return &Store{db: db, opt: opt, path: path}, nil
+}
+
 func (s *Store) Close() error      { return s.db.Close() }
 func (s *Store) Path() string      { return s.path }
 func (s *Store) Opt() Opts         { return s.opt }
