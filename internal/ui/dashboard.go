@@ -688,11 +688,11 @@ func (d *dashModel) rowView(a *App, r *dashRow, selected, showSpark, showMeta bo
 
 	// Streak cell: ◆ from 30 up; warn tint when tonight's streak is at risk.
 	streakStyle := th.Dim
-	if !r.resolved() && r.streak.Current >= 7 && time.Now().Hour() >= 21 {
+	if a.conf.AtRiskNudge && !r.resolved() && r.streak.Current >= 7 && time.Now().Hour() >= 21 {
 		streakStyle = th.Warn
 	}
 	streak := streakStyle.Render(streakText(r))
-	if r.streak.Current >= 30 {
+	if a.conf.MilestoneMarks && r.streak.Current >= 30 {
 		streak = th.Accent.Render(gl.Milestone) + " " + streak
 	}
 	streakCell := strings.Repeat(" ", max(6-lipgloss.Width(streak), 0)) + streak

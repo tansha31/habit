@@ -164,12 +164,15 @@ func (p *paletteOverlay) commandItems(a *App, q string) []palItem {
 	for _, name := range theme.Names() {
 		n := name
 		cmds = append(cmds, palItem{gl.Prompt, "theme " + n, "", "cmd:theme:" + n, func(a *App) tea.Cmd {
-			t, err := theme.Load(n, "")
-			if err != nil {
-				return a.Toast(a.theme.Danger.Render(err.Error()))
-			}
-			a.theme = t
-			return a.Toast("theme " + n) // persisted to config in M8
+			cfg := a.conf
+			cfg.Theme = n
+			a.applyConfig(cfg)
+			return tea.Batch(a.Toast("theme "+n), func() tea.Msg {
+				if err := cfg.Save(); err != nil {
+					return errMsg{err}
+				}
+				return nil
+			})
 		}})
 	}
 	if q == "" {

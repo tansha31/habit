@@ -12,7 +12,7 @@ import (
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"), Opts{})
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"), DefaultOpts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func balance(t *testing.T, s *Store) int {
 
 func TestOpenMigrateWAL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	s, err := Open(path, Opts{})
+	s, err := Open(path, DefaultOpts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestOpenMigrateWAL(t *testing.T) {
 	}
 	s.Close()
 	// Re-open must not re-migrate.
-	s2, err := Open(path, Opts{})
+	s2, err := Open(path, DefaultOpts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,12 +283,12 @@ func TestFinalizePausedHabit(t *testing.T) {
 
 func TestConcurrentReadWhileWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	writer, err := Open(path, Opts{})
+	writer, err := Open(path, DefaultOpts())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer writer.Close()
-	reader, err := Open(path, Opts{})
+	reader, err := Open(path, DefaultOpts())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 
+	"habit/internal/config"
 	"habit/internal/domain"
 	"habit/internal/store"
 	"habit/internal/ui/theme"
@@ -44,6 +46,8 @@ type Overlay interface {
 type (
 	snapMsg         struct{ snap *store.Snapshot }
 	storeChangedMsg struct{}
+	confChangedMsg  struct{}
+	saveConfMsg     struct{ gen int } // debounced Settings write (§5.5)
 	minuteMsg       struct{}
 	toastExpiredMsg struct{ gen int }
 	undoneMsg       struct {
@@ -62,8 +66,10 @@ type App struct {
 	tab      Tab
 	dash     dashModel
 	ana      anaModel
+	set      setModel
 	overlays []Overlay
 
+	conf   config.Config
 	theme  theme.Theme
 	gl     theme.Glyphs
 	border lipgloss.Border
@@ -72,19 +78,29 @@ type App struct {
 	toastText string
 	toastGen  int
 
-	w, h    int
-	tabX    [3][2]int // header x-ranges of the tab labels, for mouse
-	changes <-chan struct{}
-	mutCh   chan<- func()
+	w, h     int
+	tabX     [3][2]int // header x-ranges of the tab labels, for mouse
+	changes  <-chan struct{}
+	confCh   <-chan struct{}
+	mutCh    chan<- func()
 }
 
 // Run starts the TUI over an already-open store.
-func Run(s *store.Store) error {
+func Run(s *store.Store, cfg config.Config) error {
 	changes, closeWatch, err := watchDB(s.Path())
 	if err != nil {
 		return err
 	}
 	defer closeWatch()
+	// First run: the config dir must exist before it can be watched.
+	if err := os.MkdirAll(filepath.Dir(config.Path()), 0o755); err != nil {
+		return err
+	}
+	confCh, closeConf, err := watchDB(config.Path()) // same watcher shape
+	if err != nil {
+		return err
+	}
+	defer closeConf()
 	// All mutations flow through one FIFO worker: concurrent tea.Cmd
 	// goroutines could otherwise commit rapid keystrokes out of order.
 	mutCh := make(chan func(), 64)
@@ -97,15 +113,32 @@ func Run(s *store.Store) error {
 	app := &App{
 		store:   s,
 		day:     s.Today(),
-		theme:   theme.Default(),
-		gl:      theme.GlyphSet(theme.ASCIIOnly()),
-		border:  theme.Border("rounded"),
 		keys:    Keys,
 		changes: changes,
+		confCh:  confCh,
 		mutCh:   mutCh,
 	}
+	app.applyConfig(cfg)
 	_, err = tea.NewProgram(app).Run()
 	return err
+}
+
+// applyConfig makes a config (from disk, Settings, or the palette) the live
+// truth: theme, glyphs, borders, and store options.
+func (a *App) applyConfig(cfg config.Config) {
+	a.conf = cfg
+	t, err := theme.Load(cfg.Theme, cfg.Accent)
+	if err != nil {
+		t = theme.Default()
+	}
+	a.theme = t
+	a.gl = theme.GlyphSet(cfg.Borders == "ascii" || theme.ASCIIOnly())
+	a.border = theme.Border(cfg.Borders)
+	a.store.SetOpt(store.Opts{
+		RolloverHour:  cfg.RolloverHour,
+		WeekStart:     cfg.WeekStartDay(),
+		DisableFreeze: !cfg.FreezeTokens,
+	})
 }
 
 // mutate queues a store mutation in keystroke order; errors surface as a
@@ -222,7 +255,23 @@ func (a *App) Toast(text string) tea.Cmd {
 // ---- tea.Model ----
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(a.loadSnap(), waitChange(a.changes), minuteTick())
+	return tea.Batch(a.loadSnap(), waitChange(a.changes), waitConf(a.confCh), minuteTick())
+}
+
+// waitConf mirrors waitChange for the config file (§5.5: external edits
+// hot-reload — Settings is just a friendly editor for the file).
+func waitConf(ch <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		<-ch
+		time.Sleep(30 * time.Millisecond)
+		for {
+			select {
+			case <-ch:
+			default:
+				return confChangedMsg{}
+			}
+		}
+	}
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -254,6 +303,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.overlays = append(a.overlays, newDayDetail(a, a.ana.selDay))
 		}
 		return a, nil
+
+	case confChangedMsg:
+		if cfg, err := config.Load(); err == nil {
+			a.applyConfig(cfg)
+		}
+		return a, tea.Batch(waitConf(a.confCh), a.loadSnap())
+
+	case saveConfMsg:
+		if msg.gen != a.set.saveGen {
+			return a, nil // superseded by a newer change
+		}
+		cfg := a.conf
+		return a, func() tea.Msg {
+			if err := cfg.Save(); err != nil {
+				return errMsg{err}
+			}
+			return nil
+		}
 
 	case minuteMsg:
 		if a.store.Today() != a.day {
@@ -357,6 +424,8 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a, a.dash.handleKey(msg, a)
 		case TabAnalytics:
 			return a, a.ana.handleKey(msg, a)
+		case TabSettings:
+			return a, a.set.handleKey(msg, a)
 		}
 	}
 	return a, nil
@@ -408,6 +477,9 @@ func (a *App) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	if a.conf.Background == "solid" {
+		v.BackgroundColor = a.theme.Bg
+	}
 	return v
 }
 
@@ -472,7 +544,7 @@ func (a *App) helpLine() string {
 	case TabAnalytics:
 		bs = []key.Binding{k.PrevHabit, k.PrevYear, k.Palette, k.Help, k.Quit}
 	default:
-		bs = []key.Binding{k.NextTab, k.Palette, k.Help, k.Quit}
+		bs = []key.Binding{k.Down, k.Right, k.Toggle, k.OpenConfig, k.Help, k.Quit}
 	}
 	parts := make([]string, len(bs))
 	for i, b := range bs {
@@ -494,7 +566,7 @@ func (a *App) tabView() string {
 	case TabAnalytics:
 		return a.ana.view(a)
 	default:
-		return "\n   " + th.Dim.Render("settings arrive in M8")
+		return a.set.view(a)
 	}
 }
 

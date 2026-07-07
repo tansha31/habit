@@ -196,7 +196,7 @@ func (s *Store) SetEntry(e domain.Entry) error {
 	}
 	op := Op{Desc: descEntry(*h, e), Changes: []Change{chg("entry", before, e)}}
 
-	if e.Status == domain.StatusDone && (before == nil || before.Status != domain.StatusDone) {
+	if e.Status == domain.StatusDone && !s.opt.DisableFreeze && (before == nil || before.Status != domain.StatusDone) {
 		var doneCount int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM entry WHERE status = 'done'`).Scan(&doneCount); err != nil {
 			return err

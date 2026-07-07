@@ -12,6 +12,7 @@ import (
 	"github.com/sahilm/fuzzy"
 	"github.com/spf13/cobra"
 
+	"habit/internal/config"
 	"habit/internal/domain"
 	"habit/internal/store"
 	"habit/internal/ui"
@@ -33,12 +34,12 @@ func Execute() error {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
+			s, cfg, err := openStoreWithConfig()
 			if err != nil {
 				return err
 			}
 			defer s.Close()
-			return ui.Run(s)
+			return ui.Run(s, cfg)
 		},
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
@@ -46,18 +47,32 @@ func Execute() error {
 	return root.Execute()
 }
 
-// openStore opens the default DB and finalizes elapsed days — the same
-// launch-time close-out the TUI and daemon run (spec §6.6).
+// openStore opens the default DB with config-derived options and finalizes
+// elapsed days — the same launch-time close-out the TUI and daemon run
+// (spec §6.6).
 func openStore() (*store.Store, error) {
-	s, err := store.Open(store.DefaultPath(), store.Opts{})
+	s, _, err := openStoreWithConfig()
+	return s, err
+}
+
+func openStoreWithConfig() (*store.Store, config.Config, error) {
+	cfg, err := config.Load()
 	if err != nil {
-		return nil, err
+		return nil, cfg, fmt.Errorf("config: %w", err)
+	}
+	s, err := store.Open(store.DefaultPath(), store.Opts{
+		RolloverHour:  cfg.RolloverHour,
+		WeekStart:     cfg.WeekStartDay(),
+		DisableFreeze: !cfg.FreezeTokens,
+	})
+	if err != nil {
+		return nil, cfg, err
 	}
 	if err := s.FinalizeThrough(s.Today()); err != nil {
 		s.Close()
-		return nil, err
+		return nil, cfg, err
 	}
-	return s, nil
+	return s, cfg, nil
 }
 
 // resolveHabit finds a habit by slug or exits 2 with a fuzzy suggestion.

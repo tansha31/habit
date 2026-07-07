@@ -39,14 +39,16 @@ type palette struct {
 	Danger       string `toml:"danger"`
 	Freeze       string `toml:"freeze"`
 	BgRaised     string `toml:"bg_raised"`
+	Bg           string `toml:"bg"`
 }
 
 type Theme struct {
-	Name                          string
-	AccentColor, BgRaised         color.Color
-	Text, Dim, Faint              lipgloss.Style
-	Accent, Subtle                lipgloss.Style
-	Ok, Warn, Danger, Freeze      lipgloss.Style
+	Name                     string
+	AccentColor, BgRaised    color.Color
+	Bg                       color.Color // for background = "solid" mode
+	Text, Dim, Faint         lipgloss.Style
+	Accent, Subtle           lipgloss.Style
+	Ok, Warn, Danger, Freeze lipgloss.Style
 }
 
 // Names lists bundled and user themes, sorted, deduped (user wins).
@@ -92,6 +94,7 @@ func Load(name, accent string) (Theme, error) {
 		Name:        name,
 		AccentColor: c(p.Accent),
 		BgRaised:    c(p.BgRaised),
+		Bg:          c(p.Bg),
 		Text:        fg(p.Fg),
 		Dim:         fg(p.FgDim),
 		Faint:       fg(p.FgFaint),

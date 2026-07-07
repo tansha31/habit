@@ -99,8 +99,15 @@ INSERT INTO grp (name, builtin, position, reminder) VALUES
 `
 
 type Opts struct {
-	RolloverHour int          // logical day boundary, default 3
-	WeekStart    time.Weekday // default Monday
+	RolloverHour  int          // logical day boundary
+	WeekStart     time.Weekday
+	DisableFreeze bool // config freeze_tokens = false: no earn, no auto-spend
+}
+
+// DefaultOpts matches config.Default(); callers with a real config pass
+// their own values.
+func DefaultOpts() Opts {
+	return Opts{RolloverHour: 3, WeekStart: time.Monday}
 }
 
 type Store struct {
@@ -119,12 +126,6 @@ func DefaultPath() string {
 }
 
 func Open(path string, opt Opts) (*Store, error) {
-	if opt.RolloverHour == 0 {
-		opt.RolloverHour = 3
-	}
-	if opt.WeekStart == time.Sunday {
-		opt.WeekStart = time.Monday // ponytail: Sunday start comes with config (M8)
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -145,6 +146,11 @@ func (s *Store) Close() error      { return s.db.Close() }
 func (s *Store) Path() string      { return s.path }
 func (s *Store) Opt() Opts         { return s.opt }
 func (s *Store) Today() domain.Day { return domain.LogicalDay(time.Now(), s.opt.RolloverHour) }
+
+// SetOpt applies changed config live (rollover, week start, freeze toggle).
+// ponytail: unsynchronized — worst case one in-flight command computes with
+// the old options for a frame.
+func (s *Store) SetOpt(o Opts) { s.opt = o }
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {

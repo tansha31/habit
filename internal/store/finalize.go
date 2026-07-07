@@ -90,7 +90,7 @@ func (s *Store) FinalizeThrough(today domain.Day) error {
 		}
 		sort.Slice(misses, func(i, j int) bool { return misses[i].streak > misses[j].streak })
 		for _, m := range misses {
-			if !domain.SpendsFreeze(m.streak, balance) {
+			if s.opt.DisableFreeze || !domain.SpendsFreeze(m.streak, balance) {
 				continue
 			}
 			if err := insert(domain.Entry{HabitID: m.habitID, Day: d,

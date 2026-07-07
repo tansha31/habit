@@ -28,6 +28,9 @@ type KeyMap struct {
 	// Analytics
 	PrevHabit, NextHabit key.Binding
 	PrevYear, NextYear   key.Binding
+
+	// Settings
+	OpenConfig key.Binding
 }
 
 func b(help, desc string, keys ...string) key.Binding {
@@ -68,6 +71,8 @@ var Keys = KeyMap{
 	NextHabit: b("]", "next habit", "]"),
 	PrevYear:  b("y", "prev year", "y"),
 	NextYear:  b("Y", "next year", "Y"),
+
+	OpenConfig: b("o", "open config", "o"),
 }
 
 // helpSection is one block of the ? overlay.
