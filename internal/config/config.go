@@ -12,7 +12,7 @@ import (
 
 type Config struct {
 	Theme          string `toml:"theme"`
-	Accent         string `toml:"accent"` // hex override; "" = theme default
+	Accent         string `toml:"accent"`     // hex override; "" = theme default
 	Background     string `toml:"background"` // "terminal" | "solid"
 	Borders        string `toml:"borders"`    // "rounded" | "square" | "ascii"
 	RolloverHour   int    `toml:"rollover_hour"`

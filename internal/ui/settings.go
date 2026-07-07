@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"habit/internal/config"
@@ -176,7 +176,9 @@ func (m *setModel) items(a *App) []setItem {
 		{label: "config", note: "o open in $EDITOR",
 			render: func(a *App) string { return th.Dim.Render(shortenHome(config.Path())) }},
 		{label: "export",
-			render: func(a *App) string { return th.Dim.Render("› json   › csv") + "   " + th.Faint.Render("space runs json, l runs csv") },
+			render: func(a *App) string {
+				return th.Dim.Render("› json   › csv") + "   " + th.Faint.Render("space runs json, l runs csv")
+			},
 			change: func(a *App, dir int) tea.Cmd {
 				if dir > 0 {
 					return exportCmd(a, "csv")

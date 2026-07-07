@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
@@ -36,8 +36,8 @@ type paletteOverlay struct {
 type palItem struct {
 	icon  string
 	label string
-	hint  string             // direct keybinding, echoed on the right (§4.3)
-	fkey  string             // frecency key; "" = not tracked
+	hint  string // direct keybinding, echoed on the right (§4.3)
+	fkey  string // frecency key; "" = not tracked
 	run   func(a *App) tea.Cmd
 }
 

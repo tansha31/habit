@@ -99,7 +99,7 @@ INSERT INTO grp (name, builtin, position, reminder) VALUES
 `
 
 type Opts struct {
-	RolloverHour  int          // logical day boundary
+	RolloverHour  int // logical day boundary
 	WeekStart     time.Weekday
 	DisableFreeze bool // config freeze_tokens = false: no earn, no auto-spend
 }
@@ -425,8 +425,8 @@ func entryQ(q dbq, habitID int64, day domain.Day) (*domain.Entry, error) {
 
 // MetaGet / MetaSet expose the meta key-value table for non-journaled app
 // state (frecency, UI prefs). Not undoable by design.
-func (s *Store) MetaGet(key string) string           { return metaGet(s.db, key) }
-func (s *Store) MetaSet(key, value string) error     { return metaSet(s.db, key, value) }
+func (s *Store) MetaGet(key string) string       { return metaGet(s.db, key) }
+func (s *Store) MetaSet(key, value string) error { return metaSet(s.db, key, value) }
 
 // Entry returns one habit-day entry, or nil, nil when absent.
 func (s *Store) Entry(habitID int64, day domain.Day) (*domain.Entry, error) {

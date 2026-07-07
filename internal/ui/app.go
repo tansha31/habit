@@ -10,10 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 
@@ -78,11 +79,12 @@ type App struct {
 	toastText string
 	toastGen  int
 
-	w, h     int
-	tabX     [3][2]int // header x-ranges of the tab labels, for mouse
-	changes  <-chan struct{}
-	confCh   <-chan struct{}
-	mutCh    chan<- func()
+	w, h    int
+	tabX    [3][2]int // header x-ranges of the tab labels, for mouse
+	changes <-chan struct{}
+	confCh  <-chan struct{}
+	mutCh   chan<- func()
+	pending atomic.Int32 // queued writes; gates reloads (see storeChangedMsg)
 }
 
 // Run starts the TUI over an already-open store.
@@ -141,13 +143,20 @@ func (a *App) applyConfig(cfg config.Config) {
 	})
 }
 
-// mutate queues a store mutation in keystroke order; errors surface as a
-// toast and the fsnotify reload restores the model to DB truth.
+// mutate queues a store mutation. The enqueue happens HERE, synchronously
+// inside Update — Bubble Tea runs commands on concurrent goroutines, so
+// enqueueing inside the command would race away keystroke order. The
+// returned command only awaits the result; the pending counter keeps
+// mid-queue snapshots from clobbering optimistic state.
 func (a *App) mutate(f func(s *store.Store) error) tea.Cmd {
-	s, ch := a.store, a.mutCh
+	s := a.store
+	a.pending.Add(1)
+	done := make(chan error, 1)
+	a.mutCh <- func() {
+		done <- f(s)
+		a.pending.Add(-1)
+	}
 	return func() tea.Msg {
-		done := make(chan error, 1)
-		ch <- func() { done <- f(s) }
 		if err := <-done; err != nil {
 			return errMsg{err}
 		}
@@ -230,9 +239,13 @@ func (a *App) rolloverCmd() tea.Cmd {
 	}
 }
 
+// undoCmd goes through the same worker, enqueued in Update order — rapid
+// u/ctrl+r presses must apply in keystroke order.
 func (a *App) undoCmd(redo bool) tea.Cmd {
 	s := a.store
-	return func() tea.Msg {
+	a.pending.Add(1)
+	res := make(chan undoneMsg, 1)
+	a.mutCh <- func() {
 		var desc string
 		var err error
 		if redo {
@@ -240,8 +253,10 @@ func (a *App) undoCmd(redo bool) tea.Cmd {
 		} else {
 			desc, err = s.Undo()
 		}
-		return undoneMsg{desc, err, redo}
+		a.pending.Add(-1)
+		res <- undoneMsg{desc, err, redo}
 	}
+	return func() tea.Msg { return <-res }
 }
 
 // Toast shows a transient line above the help bar for 4 s (§5.1).
@@ -287,6 +302,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case storeChangedMsg:
+		if a.pending.Load() > 0 {
+			// Writes still queued: this snapshot would be stale. The event
+			// after the final commit triggers the clean reload.
+			return a, waitChange(a.changes)
+		}
 		cmds := []tea.Cmd{a.loadSnap(), waitChange(a.changes)}
 		if a.ana.loadedYear != 0 {
 			a.ana.loadedYear = 0 // stale; reload lazily
