@@ -7,6 +7,9 @@
 # Go
 /vendor/
 
+# graphify (generated knowledge-graph artifacts)
+/graphify-out/
+
 # SQLite (local dev databases + WAL/SHM sidecars)
 *.db
 *.db-wal
