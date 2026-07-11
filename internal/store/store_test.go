@@ -316,3 +316,41 @@ func TestConcurrentReadWhileWrite(t *testing.T) {
 		t.Fatalf("entries = %d, err %v", len(entries), err)
 	}
 }
+
+func TestEnsureGroup(t *testing.T) {
+	s := testStore(t)
+
+	g, err := s.EnsureGroup("Workout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.ID == 0 || g.Name != "Workout" {
+		t.Fatalf("create: got %+v", g)
+	}
+
+	// Case-insensitive reuse: seeded builtin and the group just created.
+	m, err := s.EnsureGroup("morning")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Builtin || m.Name != "Morning" {
+		t.Fatalf("seeded reuse: got %+v", m)
+	}
+	g2, err := s.EnsureGroup("WORKOUT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g2.ID != g.ID {
+		t.Fatalf("reuse: got ID %d, want %d", g2.ID, g.ID)
+	}
+
+	// Custom group persists as builtin=0, appended after the seeded three.
+	groups, err := s.Groups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := groups[len(groups)-1]
+	if len(groups) != 4 || last.Name != "Workout" || last.Builtin || last.Position != 4 {
+		t.Fatalf("groups: got %+v", groups)
+	}
+}

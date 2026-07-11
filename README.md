@@ -38,7 +38,7 @@ the day's next habit is logged.
 | `Space`/`Enter` | Toggle done · log quantified target |
 | `+` `-` | Nudge a quantified amount by its step |
 | `s` | Skip with a reason (t/v/s/o/n) |
-| `n` `e` | New habit · edit selected |
+| `n` `e` | New habit · edit selected (type in the Group field to create a group) |
 | `dd` | Archive (undoable — nothing ever asks "are you sure?") |
 | `u` / `Ctrl+R` | Undo / redo, shared with the CLI |
 | `/` or `Ctrl+P` | Command palette (`>` commands · `@` dates · `#` tags) |

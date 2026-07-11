@@ -23,6 +23,7 @@ type editorOverlay struct {
 	sched domain.Schedule
 
 	name, target, unit, perweek, tags, reminder textinput.Model
+	group                                       textinput.Model // non-empty = create/reuse by name; empty = cycler
 	groups                                      []domain.Group
 	gIdx                                        int
 
@@ -65,6 +66,7 @@ func newEditor(a *App, h *domain.Habit) *editorOverlay {
 	e.perweek = ti("3", 4)
 	e.tags = ti("", 28)
 	e.reminder = ti("", 8)
+	e.group = ti("", 28)
 	if h != nil {
 		e.kind, e.sched = h.Kind, h.Schedule
 		e.name.SetValue(h.Name)
@@ -109,6 +111,8 @@ func (e *editorOverlay) inputFor(f int) *textinput.Model {
 		return &e.unit
 	case fPerWeek:
 		return &e.perweek
+	case fGroup:
+		return &e.group
 	case fTags:
 		return &e.tags
 	case fReminder:
@@ -181,14 +185,17 @@ func (e *editorOverlay) Update(msg tea.Msg, a *App) (Overlay, tea.Cmd) {
 		}
 		return e, nil
 	case fGroup:
-		if toggle && len(e.groups) > 0 {
+		// Empty input = cycler (←/→/space only — h/l must type here, a group
+		// name may contain them). Any other key falls through and types.
+		cycle := kp.String() == "space" || kp.String() == "left" || kp.String() == "right"
+		if e.group.Value() == "" && cycle && len(e.groups) > 0 {
 			dir := 1
-			if kp.String() == "h" || kp.String() == "left" {
+			if kp.String() == "left" {
 				dir = -1
 			}
 			e.gIdx = (e.gIdx + dir + len(e.groups)) % len(e.groups)
+			return e, nil
 		}
-		return e, nil
 	}
 
 	// Everything else types into the focused input.
@@ -254,18 +261,42 @@ func (e *editorOverlay) save(a *App) (Overlay, tea.Cmd) {
 	if len(e.groups) > 0 {
 		h.GroupID = e.groups[e.gIdx].ID
 	}
+	// Typed group name wins over the cycler; resolved on the store worker
+	// (EnsureGroup reuses a case-insensitive match or creates builtin=0).
+	gname := strings.TrimSpace(e.group.Value())
+	resolve := func(s *store.Store) (domain.Habit, error) {
+		hh := h
+		if gname == "" {
+			return hh, nil
+		}
+		g, err := s.EnsureGroup(gname)
+		if err != nil {
+			return hh, err
+		}
+		hh.GroupID = g.ID
+		return hh, nil
+	}
 
 	var toast string
 	var mut tea.Cmd
 	if e.orig == nil {
 		toast = fmt.Sprintf("added %s · %s", h.Name, undoHint(a))
 		mut = a.mutate(func(s *store.Store) error {
-			hh := h
+			hh, err := resolve(s)
+			if err != nil {
+				return err
+			}
 			return s.CreateHabit(&hh)
 		})
 	} else {
 		toast = fmt.Sprintf("saved %s · %s", h.Name, undoHint(a))
-		mut = a.mutate(func(s *store.Store) error { return s.UpdateHabit(h) })
+		mut = a.mutate(func(s *store.Store) error {
+			hh, err := resolve(s)
+			if err != nil {
+				return err
+			}
+			return s.UpdateHabit(hh)
+		})
 	}
 	return nil, tea.Batch(a.Toast(toast), mut)
 }
@@ -307,15 +338,21 @@ func (e *editorOverlay) View(a *App) string {
 		row(label(fPerWeek, "Per week") + e.perweek.View())
 	}
 	row("")
-	groupName := "—"
-	if len(e.groups) > 0 {
-		groupName = e.groups[e.gIdx].Name
+	if e.group.Value() != "" {
+		row(label(fGroup, "Group") + e.group.View() + " " + th.Faint.Render("(new group)"))
+	} else {
+		groupName := "—"
+		if len(e.groups) > 0 {
+			groupName = e.groups[e.gIdx].Name
+		}
+		gStyle := th.Text
+		hint := ""
+		if e.focus == fGroup {
+			gStyle = th.Accent
+			hint = " " + th.Faint.Render("type to create")
+		}
+		row(label(fGroup, "Group") + gStyle.Render("‹ "+groupName+" ›") + hint)
 	}
-	gStyle := th.Text
-	if e.focus == fGroup {
-		gStyle = th.Accent
-	}
-	row(label(fGroup, "Group") + gStyle.Render("‹ "+groupName+" ›"))
 	row(label(fTags, "Tags") + e.tags.View())
 	row(label(fReminder, "Reminder") + e.reminder.View() + "   " + th.Faint.Render("requires habitd"))
 	row("")
