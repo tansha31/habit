@@ -43,7 +43,7 @@ func Execute() error {
 		},
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.AddCommand(doneCmd(), skipCmd(), undoCmd(), addCmd(), statusCmd(), exportCmd(), doctorCmd(), daemonCmd())
+	root.AddCommand(doneCmd(), skipCmd(), undoCmd(), addCmd(), statusCmd(), exportCmd(), doctorCmd(), resetCmd(), daemonCmd())
 	return root.Execute()
 }
 
@@ -267,6 +267,47 @@ func undoCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// resetCmd is the CLI face of store.Reset — the one destructive, non-undoable
+// command, so it prompts for a typed "yes" unless -y is given.
+func resetCmd() *cobra.Command {
+	var all, yes bool
+	cmd := &cobra.Command{
+		Use:   "reset",
+		Short: "Erase logged data (--all also deletes habits) — not undoable",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := store.ResetLogs
+			what := "all logged data (entries, tokens, streaks, history)"
+			if all {
+				mode = store.ResetAll
+				what = "ALL habits and their logged data"
+			}
+			if !yes {
+				fmt.Printf("Permanently delete %s? This cannot be undone.\nType 'yes' to continue: ", what)
+				var in string
+				fmt.Scanln(&in)
+				if in != "yes" {
+					fmt.Println("aborted")
+					return nil
+				}
+			}
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			if err := s.Reset(mode); err != nil {
+				return err
+			}
+			fmt.Println("done — data reset")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "also delete habits (default keeps them)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
+	return cmd
 }
 
 func doctorCmd() *cobra.Command {

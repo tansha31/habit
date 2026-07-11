@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"habit/internal/config"
+	"habit/internal/store"
 	"habit/internal/ui/theme"
 	"habit/internal/ui/widgets"
 )
@@ -185,6 +186,12 @@ func (m *setModel) items(a *App) []setItem {
 				}
 				return exportCmd(a, "json")
 			}},
+		{label: "reset data", note: "logs or everything",
+			render: func(a *App) string { return th.Danger.Render("› reset…") },
+			change: func(a *App, _ int) tea.Cmd {
+				a.overlays = append(a.overlays, &resetOverlay{})
+				return nil // the overlay drives the confirm + wipe
+			}},
 	}
 }
 
@@ -305,6 +312,71 @@ func (m *setModel) view(a *App) string {
 		}
 	}
 	return "\n" + strings.Join(lines, "\n")
+}
+
+// ---- reset-data confirm (Settings → DATA) ----
+
+// resetOverlay is the two-step guard for the one-way data wipe: stage 0 picks
+// the scope, stage 1 confirms. This confirm is the deliberate exception to the
+// "everything is undoable" invariant — the wipe clears the undo journal itself,
+// so it can't be undone (see store.Reset).
+type resetOverlay struct {
+	stage int // 0 = pick scope, 1 = confirm
+	mode  store.ResetMode
+}
+
+func (o *resetOverlay) Update(msg tea.Msg, a *App) (Overlay, tea.Cmd) {
+	kp, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return o, nil
+	}
+	if key.Matches(kp, a.keys.Esc) {
+		return nil, nil
+	}
+	if o.stage == 0 {
+		switch kp.String() {
+		case "l":
+			o.mode, o.stage = store.ResetLogs, 1
+		case "d":
+			o.mode, o.stage = store.ResetAll, 1
+		}
+		return o, nil
+	}
+	if kp.String() == "y" {
+		mode := o.mode
+		toast := "logged data cleared"
+		if mode == store.ResetAll {
+			toast = "all data deleted"
+		}
+		return nil, tea.Batch(
+			a.mutate(func(s *store.Store) error { return s.Reset(mode) }),
+			a.Toast(toast),
+		)
+	}
+	return o, nil
+}
+
+func (o *resetOverlay) View(a *App) string {
+	th := a.theme
+	var b strings.Builder
+	if o.stage == 0 {
+		b.WriteString(th.Text.Render("Reset data") + "\n\n")
+		b.WriteString(fmt.Sprintf("  %s  %s\n", th.Accent.Render("l"), th.Dim.Render("clear logged data (keep habits)")))
+		b.WriteString(fmt.Sprintf("  %s  %s\n", th.Accent.Render("d"), th.Dim.Render("delete everything (habits + logs)")))
+		b.WriteString("\n" + th.Faint.Render("esc cancel"))
+	} else {
+		what := "all logged data"
+		if o.mode == store.ResetAll {
+			what = "ALL habits and logs"
+		}
+		b.WriteString(th.Danger.Render("Delete "+what+"?") + "\n\n")
+		b.WriteString(th.Dim.Render("This cannot be undone.") + "\n\n")
+		b.WriteString(fmt.Sprintf("  %s confirm   %s", th.Danger.Render("y"), th.Faint.Render("esc cancel")))
+	}
+	box := lipgloss.NewStyle().
+		Border(a.border).BorderForeground(th.AccentColor).
+		Padding(0, 2).Render(b.String())
+	return widgets.Shadowed(box, a.gl.Shadow, th.Faint)
 }
 
 func (m *setModel) previewCard(a *App) []string {

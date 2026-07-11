@@ -521,6 +521,70 @@ func (s *Store) Doctor() (string, error) {
 	return fmt.Sprintf("integrity: %s · streak cache rebuilt for %d habits", integrity, len(habits)), nil
 }
 
+// ResetMode selects how much Reset erases.
+type ResetMode int
+
+const (
+	ResetLogs ResetMode = iota // wipe logs, keep habits + groups
+	ResetAll                   // also delete habits, tags, and custom groups
+)
+
+// Reset erases data in one transaction. Unlike every other mutation it is NOT
+// journaled — and it clears the journal — because wiping data removes the undo
+// history itself. It is therefore a deliberate one-way action, guarded by an
+// explicit confirmation in the TUI/CLI (the sanctioned exception to the
+// "everything is undoable" invariant). Built-in groups and config.toml are
+// always preserved; ResetAll drops user-created (builtin=0) groups too.
+func (s *Store) Reset(mode ResetMode) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// foreign_keys=ON, so delete children before parents.
+	stmts := []string{
+		`DELETE FROM entry`,
+		`DELETE FROM freeze_ledger`,
+		`DELETE FROM streak_cache`,
+		`DELETE FROM journal`,
+	}
+	if mode == ResetAll {
+		stmts = append(stmts,
+			`DELETE FROM habit_tag`,
+			`DELETE FROM tag`,
+			`DELETE FROM habit`,
+			// No-op today (groups aren't user-creatable yet); future-proofs the
+			// wipe so custom groups reset to a fresh install while built-ins stay.
+			`DELETE FROM grp WHERE builtin = 0`,
+		)
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	if err := metaSet(tx, "undo_cursor", "0"); err != nil {
+		return err
+	}
+	// Match a fresh install: nothing before today owes finalization.
+	if err := metaSet(tx, "last_finalized", string(s.Today().AddDays(-1))); err != nil {
+		return err
+	}
+	// Rebuild streak caches for whatever habits remain (empty entries → 0/0),
+	// the same routine Doctor uses.
+	habits, err := habitsQ(tx, true)
+	if err != nil {
+		return err
+	}
+	for _, h := range habits {
+		if err := recomputeStreak(tx, h.ID, s.Today(), s.opt.WeekStart); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // recomputeStreak refreshes one habit's streak_cache row from its entries
 // (full recompute per the domain ponytail note). Missing habit → row removed.
 func recomputeStreak(q dbq, habitID int64, today domain.Day, weekStart time.Weekday) error {
