@@ -24,6 +24,8 @@ type KeyMap struct {
 	MoveUp, MoveDown      key.Binding
 	Pause                 key.Binding
 	Top, Bottom           key.Binding // gg / G
+	PrevDay, NextDay      key.Binding // [ / ] — time travel (backfill)
+	Today                 key.Binding
 
 	// Analytics
 	PrevHabit, NextHabit key.Binding
@@ -66,6 +68,9 @@ var Keys = KeyMap{
 	Pause:    b("p", "pause", "p"),
 	Top:      b("gg", "first", "g"),
 	Bottom:   b("G", "last", "G"),
+	PrevDay:  b("[", "prev day", "["),
+	NextDay:  b("]", "next day", "]"),
+	Today:    b("t", "back to today", "t"),
 
 	PrevHabit: b("[", "prev habit", "["),
 	NextHabit: b("]", "next habit", "]"),
@@ -85,7 +90,7 @@ func helpSections() []helpSection {
 	k := Keys
 	return []helpSection{
 		{"Global", []key.Binding{k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.Palette, k.Undo, k.Redo, k.Help, k.Quit}},
-		{"Dashboard", []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Toggle, k.Inc, k.Dec, k.Skip, k.New, k.Edit, k.Archive, k.MoveUp, k.MoveDown, k.Pause, k.Top, k.Bottom}},
+		{"Dashboard", []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Toggle, k.Inc, k.Dec, k.Skip, k.New, k.Edit, k.Archive, k.MoveUp, k.MoveDown, k.Pause, k.Top, k.Bottom, k.PrevDay, k.NextDay, k.Today}},
 		{"Analytics", []key.Binding{k.PrevHabit, k.NextHabit, k.Left, k.Right, k.PrevYear, k.NextYear, k.Toggle}},
 	}
 }

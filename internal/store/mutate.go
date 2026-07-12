@@ -181,8 +181,13 @@ func applyChange(tx *sql.Tx, c Change) (int64, error) {
 
 // SetEntry upserts one habit-day entry. A completion that is the habit's
 // Nth global "done" may also earn a freeze token in the same op, so undoing
-// the completion returns the token.
+// the completion returns the token. Past days are legal backfills: stamped
+// source "backfill", and replacing an auto-spent freeze refunds the token.
 func (s *Store) SetEntry(e domain.Entry) error {
+	today := s.Today()
+	if e.Day > today {
+		return fmt.Errorf("cannot log the future (%s)", e.Day)
+	}
 	before, err := entryQ(s.db, e.HabitID, e.Day)
 	if err != nil {
 		return err
@@ -194,7 +199,26 @@ func (s *Store) SetEntry(e domain.Entry) error {
 	if h == nil {
 		return fmt.Errorf("no habit with id %d", e.HabitID)
 	}
+	// Creation day only, not ActiveOn: archived habits keep their history
+	// editable, and streaks ignore pre-creation days anyway.
+	if created := h.CreatedDay(); e.Day < created {
+		return fmt.Errorf("%s didn't exist on %s (created %s)", h.Slug, e.Day, created)
+	}
+	if e.Day < today {
+		e.Source = "backfill"
+	}
 	op := Op{Desc: descEntry(*h, e), Changes: []Change{chg("entry", before, e)}}
+	ledgerID := nextID(s.db, "freeze_ledger") // preallocated: two changes in one op must not share MAX(id)+1
+	refunds := 0
+	if before != nil && before.Status == domain.StatusFreeze && e.Status == domain.StatusDone {
+		// The day turned out to be done — return the auto-spent token.
+		// Done only: a backfilled skip/partial breaks the streak the token
+		// was protecting, so that spend stands.
+		op.Changes = append(op.Changes, freezeChg(ledgerID, e.Day, e.HabitID, "refund"))
+		op.Desc += " · ❄ refunded"
+		ledgerID++
+		refunds = 1
+	}
 
 	if e.Status == domain.StatusDone && !s.opt.DisableFreeze && (before == nil || before.Status != domain.StatusDone) {
 		var doneCount int
@@ -205,18 +229,26 @@ func (s *Store) SetEntry(e domain.Entry) error {
 		if err != nil {
 			return err
 		}
-		if domain.EarnsFreeze(doneCount+1, bal) {
-			op.Changes = append(op.Changes, chg("ledger", nil, ledgerRow{
-				ID: nextID(s.db, "freeze_ledger"), Day: e.Day, Delta: 1,
-				HabitID: e.HabitID, Reason: "earned",
-			}))
+		// bal+refunds: the refund above lands in the same commit, and the
+		// earn must not push the settled balance past FreezeCap.
+		if domain.EarnsFreeze(doneCount+1, bal+refunds) {
+			op.Changes = append(op.Changes, freezeChg(ledgerID, e.Day, e.HabitID, "earned"))
 			op.Desc += " · ❄ +1"
 		}
 	}
 	return s.mutate(op)
 }
 
+// freezeChg is one +1 freeze_ledger row as a journaled change. The caller
+// preallocates the ID (see SetEntry) — sibling changes sharing MAX(id)+1
+// would silently swallow each other under INSERT OR REPLACE.
+func freezeChg(id int64, day domain.Day, habitID int64, reason string) Change {
+	return chg("ledger", nil, ledgerRow{ID: id, Day: day, Delta: 1, HabitID: habitID, Reason: reason})
+}
+
 // ClearEntry removes a habit-day entry (quantified amount back to zero).
+// Deleting an auto-freeze entry un-spends its token — otherwise the day
+// reverts to a plain miss but the ledger keeps the -1 forever.
 func (s *Store) ClearEntry(habitID int64, day domain.Day) error {
 	before, err := entryQ(s.db, habitID, day)
 	if err != nil || before == nil {
@@ -227,7 +259,12 @@ func (s *Store) ClearEntry(habitID int64, day domain.Day) error {
 	if h != nil {
 		slug = h.Slug
 	}
-	return s.mutate(Op{Desc: "clear " + slug, Changes: []Change{chg("entry", before, nil)}})
+	op := Op{Desc: "clear " + slug, Changes: []Change{chg("entry", before, nil)}}
+	if before.Status == domain.StatusFreeze {
+		op.Changes = append(op.Changes, freezeChg(nextID(s.db, "freeze_ledger"), day, habitID, "refund"))
+		op.Desc += " · ❄ refunded"
+	}
+	return s.mutate(op)
 }
 
 // CreateHabit inserts h (assigning ID, slug, position, created time).

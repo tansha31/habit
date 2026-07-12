@@ -461,18 +461,18 @@ func (s *Store) Streaks() (map[int64]domain.Streak, error) {
 
 // Snapshot is the single batched load behind the dashboard (spec §6.2):
 // groups, active habits, a 14-day entry window, streaks, freeze balance.
+// day anchors the window — today normally, a past day when time-traveling.
 type Snapshot struct {
-	Today   domain.Day
+	Day     domain.Day
 	Groups  []domain.Group
 	Habits  []domain.Habit
-	Entries []domain.Entry // window today-13 … today; covers sparkline + this week
+	Entries []domain.Entry // window day-13 … day; covers sparkline + that week
 	Streaks map[int64]domain.Streak
 	Freeze  int
 }
 
-func (s *Store) Snapshot() (*Snapshot, error) {
-	today := s.Today()
-	snap := &Snapshot{Today: today}
+func (s *Store) Snapshot(day domain.Day) (*Snapshot, error) {
+	snap := &Snapshot{Day: day}
 	var err error
 	if snap.Groups, err = s.Groups(); err != nil {
 		return nil, err
@@ -480,7 +480,7 @@ func (s *Store) Snapshot() (*Snapshot, error) {
 	if snap.Habits, err = s.Habits(false); err != nil {
 		return nil, err
 	}
-	if snap.Entries, err = s.EntriesRange(today.AddDays(-13), today); err != nil {
+	if snap.Entries, err = s.EntriesRange(day.AddDays(-13), day); err != nil {
 		return nil, err
 	}
 	if snap.Streaks, err = s.Streaks(); err != nil {
@@ -554,6 +554,9 @@ func (s *Store) Reset(mode ResetMode) error {
 			`DELETE FROM habit_tag`,
 			`DELETE FROM tag`,
 			`DELETE FROM habit`,
+			// Palette frecency keys habits by slug; stale scores would rank a
+			// recreated habit as if it had the old one's history.
+			`DELETE FROM meta WHERE key = 'frecency'`,
 			// No-op today (groups aren't user-creatable yet); future-proofs the
 			// wipe so custom groups reset to a fresh install while built-ins stay.
 			`DELETE FROM grp WHERE builtin = 0`,

@@ -195,10 +195,17 @@ func (p *paletteOverlay) dateItems(a *App, q string) []palItem {
 	if !ok {
 		return []palItem{{a.gl.Pending, "type a date — yesterday · jun 12 · 2026-06-12 · -3", "", "", nil}}
 	}
-	label := fmt.Sprintf("open %s in Analytics", day.Time().Format("Mon · Jan 2 2006"))
-	return []palItem{{a.gl.Focus, label, "", "", func(a *App) tea.Cmd {
+	pretty := day.Time().Format("Mon · Jan 2 2006")
+	items := []palItem{{a.gl.Focus, "open " + pretty + " in Analytics", "", "", func(a *App) tea.Cmd {
 		return a.openAnalytics(day)
 	}}}
+	if day < a.day {
+		items = append(items, palItem{a.gl.Done, "log " + pretty + " in Dashboard", "", "", func(a *App) tea.Cmd {
+			a.tab = TabDashboard
+			return a.dash.gotoDay(a, day)
+		}})
+	}
+	return items
 }
 
 var palRelDay = regexp.MustCompile(`^-\d+$`)

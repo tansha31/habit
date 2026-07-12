@@ -78,7 +78,7 @@ func (d *dashModel) rebuild(a *App) {
 		prevSel = r.h.ID
 	}
 
-	today := snap.Today
+	today := snap.Day
 	weekStart := today.WeekStart(a.store.Opt().WeekStart)
 	sparkFrom := today.AddDays(-13)
 
@@ -91,7 +91,8 @@ func (d *dashModel) rebuild(a *App) {
 	for _, g := range snap.Groups {
 		dg := dashGroup{g: g}
 		for _, h := range snap.Habits {
-			if h.GroupID != g.ID || (d.filterTag != "" && !hasTag(h, d.filterTag)) {
+			if h.GroupID != g.ID || (d.filterTag != "" && !hasTag(h, d.filterTag)) ||
+				!h.ActiveOn(today) { // time travel: hide habits born later
 				continue
 			}
 			r := dashRow{h: h, streak: snap.Streaks[h.ID], spark: make([]float64, 14)}
@@ -347,14 +348,37 @@ func (d *dashModel) handleKey(msg tea.KeyPressMsg, a *App) tea.Cmd {
 			h := r.h
 			a.overlays = append(a.overlays, newEditor(a, &h))
 		}
+	case key.Matches(msg, k.PrevDay):
+		return d.gotoDay(a, a.viewDay.AddDays(-1))
+	case key.Matches(msg, k.NextDay):
+		return d.gotoDay(a, a.viewDay.AddDays(1))
+	case key.Matches(msg, k.Today):
+		return d.gotoDay(a, a.day)
 	case key.Matches(msg, k.Esc):
 		if d.filterTag != "" {
 			d.filterTag = ""
 			d.rebuild(a)
 			return a.Toast(a.theme.Dim.Render("filter cleared"))
 		}
+		if a.viewDay != a.day {
+			return d.gotoDay(a, a.day)
+		}
 	}
 	return nil
+}
+
+// gotoDay time-travels the dashboard to day (clamped at today) and reloads
+// the snapshot window around it — every action then edits that day.
+// Deliberately NOT gated on a.pending: the view is switching days, so there
+// is no on-screen optimistic state to clobber, snapMsg drops stale results
+// by day, and a queued write that errors (no fsnotify event) would otherwise
+// leave the header and rows disagreeing forever.
+func (d *dashModel) gotoDay(a *App, day domain.Day) tea.Cmd {
+	if day > a.day || day == a.viewDay {
+		return nil
+	}
+	a.viewDay = day
+	return a.loadSnap()
 }
 
 // ---- mutations (optimistic in-memory + queued persistence) ----
@@ -373,7 +397,7 @@ func (d *dashModel) toggle(a *App) tea.Cmd {
 	}
 	amount := r.h.Target // full target in one stroke (§6.3); 0 for check habits
 	return d.setEntry(a, r, domain.Entry{
-		HabitID: r.h.ID, Day: a.day, Status: domain.StatusDone,
+		HabitID: r.h.ID, Day: a.viewDay, Status: domain.StatusDone,
 		Amount: amount, LoggedAt: time.Now(), Source: "tui",
 	})
 }
@@ -393,7 +417,7 @@ func (d *dashModel) nudge(a *App, dir float64) tea.Cmd {
 		return d.clear(a, r)
 	}
 	e := domain.Entry{
-		HabitID: r.h.ID, Day: a.day, Status: r.h.StatusFor(amount),
+		HabitID: r.h.ID, Day: a.viewDay, Status: r.h.StatusFor(amount),
 		Amount: amount, LoggedAt: time.Now(), Source: "tui",
 	}
 	if r.entry != nil {
@@ -414,29 +438,36 @@ func (d *dashModel) setEntry(a *App, r *dashRow, e domain.Entry) tea.Cmd {
 	switch e.Status {
 	case domain.StatusDone:
 		if !wasDone {
-			old := r.streak.Current
-			if r.h.Schedule == domain.Weekly {
-				r.weekDone++
-				if r.weekDone == r.h.PerWeek {
-					r.streak.Current++
+			if a.viewDay != a.day {
+				// Backfill: the true streak effect (resurrection, extension)
+				// only falls out of the store recompute — the reload shows it.
+				toast = fmt.Sprintf("%s %s · %s · %s", th.Ok.Render(gl.Done),
+					r.h.Name, a.viewDay.Time().Format("Jan 2"), undoHint(a))
+			} else {
+				old := r.streak.Current
+				if r.h.Schedule == domain.Weekly {
+					r.weekDone++
+					if r.weekDone == r.h.PerWeek {
+						r.streak.Current++
+					}
+				} else if r.streak.LastDay != a.day {
+					if r.streak.LastDay == a.day.AddDays(-1) {
+						r.streak.Current++
+					} else {
+						r.streak.Current = 1
+					}
+					r.streak.LastDay = a.day
 				}
-			} else if r.streak.LastDay != a.day {
-				if r.streak.LastDay == a.day.AddDays(-1) {
-					r.streak.Current++
-				} else {
-					r.streak.Current = 1
+				if r.streak.Current > r.streak.Best {
+					r.streak.Best = r.streak.Current
 				}
-				r.streak.LastDay = a.day
-			}
-			if r.streak.Current > r.streak.Best {
-				r.streak.Best = r.streak.Current
-			}
-			toast = fmt.Sprintf("%s %s · streak %s · %s",
-				th.Ok.Render(gl.Done), r.h.Name, streakText(r), undoHint(a))
-			if m := domain.MilestoneCrossed(old, r.streak.Current); m != 0 {
-				toast = fmt.Sprintf("%s %s · %s %d %s! · %s",
-					th.Ok.Render(gl.Done), r.h.Name,
-					th.Accent.Render(gl.Milestone), m, "milestone", undoHint(a))
+				toast = fmt.Sprintf("%s %s · streak %s · %s",
+					th.Ok.Render(gl.Done), r.h.Name, streakText(r), undoHint(a))
+				if m := domain.MilestoneCrossed(old, r.streak.Current); m != 0 {
+					toast = fmt.Sprintf("%s %s · %s %d %s! · %s",
+						th.Ok.Render(gl.Done), r.h.Name,
+						th.Accent.Render(gl.Milestone), m, "milestone", undoHint(a))
+				}
 			}
 			d.advance()
 		} else {
@@ -460,7 +491,7 @@ func (d *dashModel) clear(a *App, r *dashRow) tea.Cmd {
 	if r.entry == nil {
 		return nil
 	}
-	if r.status() == domain.StatusDone {
+	if r.status() == domain.StatusDone && a.viewDay == a.day {
 		if r.h.Schedule == domain.Weekly {
 			r.weekDone--
 			if r.weekDone == r.h.PerWeek-1 && r.streak.Current > 0 {
@@ -559,8 +590,14 @@ func (d *dashModel) view(a *App) string {
 	if total > 0 {
 		frac = float64(done) / float64(total)
 	}
-	summary := fmt.Sprintf("   Today · %d of %d   %s  %2.0f%%",
-		done, total, th.Accent.Render(widgets.Bar(frac, 21, gl.BarOn, gl.BarOff)), frac*100)
+	label := "Today"
+	if a.viewDay != a.day {
+		ago := domain.DaysBetween(a.viewDay, a.day)
+		label = th.Warn.Render(fmt.Sprintf("%s · %dd ago", a.viewDay.Time().Format("Mon · Jan 2"), ago)) +
+			th.Dim.Render(" · t today")
+	}
+	summary := fmt.Sprintf("   %s · %d of %d   %s  %2.0f%%",
+		label, done, total, th.Accent.Render(widgets.Bar(frac, 21, gl.BarOn, gl.BarOff)), frac*100)
 	if d.filterTag != "" {
 		summary += "   " + th.Accent.Render("#"+d.filterTag)
 	}
@@ -727,7 +764,7 @@ func (o skipOverlay) Update(msg tea.Msg, a *App) (Overlay, tea.Cmd) {
 			d := &a.dash
 			if r := d.selected(); r != nil && r.h.ID == o.habit.ID {
 				return nil, d.setEntry(a, r, domain.Entry{
-					HabitID: o.habit.ID, Day: a.day, Status: domain.StatusSkip,
+					HabitID: o.habit.ID, Day: a.viewDay, Status: domain.StatusSkip,
 					SkipReason: c.reason, LoggedAt: time.Now(), Source: "tui",
 				})
 			}

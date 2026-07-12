@@ -37,7 +37,7 @@ type dayStatus struct {
 }
 
 func buildStatus(snap *store.Snapshot, weekStart domain.Day) dayStatus {
-	st := dayStatus{Date: snap.Today, Freeze: snap.Freeze}
+	st := dayStatus{Date: snap.Day, Freeze: snap.Freeze}
 	groups := map[int64]string{}
 	for _, g := range snap.Groups {
 		groups[g.ID] = g.Name
@@ -45,7 +45,7 @@ func buildStatus(snap *store.Snapshot, weekStart domain.Day) dayStatus {
 	todays := map[int64]domain.Entry{}
 	weekDone := map[int64]int{}
 	for _, e := range snap.Entries {
-		if e.Day == snap.Today {
+		if e.Day == snap.Day {
 			todays[e.HabitID] = e
 		}
 		if e.Status == domain.StatusDone && e.Day >= weekStart {
@@ -99,11 +99,11 @@ func statusCmd() *cobra.Command {
 				return err
 			}
 			defer s.Close()
-			snap, err := s.Snapshot()
+			snap, err := s.Snapshot(s.Today())
 			if err != nil {
 				return err
 			}
-			st := buildStatus(snap, snap.Today.WeekStart(s.Opt().WeekStart))
+			st := buildStatus(snap, snap.Day.WeekStart(s.Opt().WeekStart))
 
 			switch {
 			case asPrompt:

@@ -62,14 +62,18 @@ type Habit struct {
 func (h Habit) Archived() bool { return h.ArchivedAt != nil }
 func (h Habit) Paused() bool   { return h.PausedAt != nil }
 
+// CreatedDay is the LOCAL calendar day the habit was created. CreatedAt is
+// stored UTC, so formatting it directly is off by one for evening creations
+// west of UTC — rejecting same-day logs and hiding the habit until tomorrow.
+// ponytail: local date, not rollover-aware; a heatmap cell of precision.
+func (h Habit) CreatedDay() Day { return Day(h.CreatedAt.Local().Format("2006-01-02")) }
+
 // ActiveOn reports whether the habit existed and was not yet archived on d.
-// ponytail: compares calendar dates of the timestamps; rollover-hour
-// precision doesn't matter for a heatmap cell.
 func (h Habit) ActiveOn(d Day) bool {
-	if Day(h.CreatedAt.Format("2006-01-02")) > d {
+	if h.CreatedDay() > d {
 		return false
 	}
-	return h.ArchivedAt == nil || Day(h.ArchivedAt.Format("2006-01-02")) > d
+	return h.ArchivedAt == nil || Day(h.ArchivedAt.Local().Format("2006-01-02")) > d
 }
 
 // StatusFor derives the entry status for a logged amount. Callers delete the
