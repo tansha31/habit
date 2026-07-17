@@ -42,17 +42,17 @@ func InQuietHours(now time.Time, cfg config.Config) bool {
 // Due returns per-group notifications for habits whose reminder has passed
 // and are still unresolved today. Habit reminders override group defaults.
 func Due(s *store.Store, now time.Time) ([]Notification, error) {
-	snap, err := s.Snapshot()
+	snap, err := s.Snapshot(s.Today())
 	if err != nil {
 		return nil, err
 	}
 	hm := now.Format("15:04")
-	weekStart := snap.Today.WeekStart(s.Opt().WeekStart)
+	weekStart := snap.Day.WeekStart(s.Opt().WeekStart)
 
 	resolved := map[int64]bool{}
 	weekDone := map[int64]int{}
 	for _, e := range snap.Entries {
-		if e.Day == snap.Today {
+		if e.Day == snap.Day {
 			resolved[e.HabitID] = true
 		}
 		if e.Status == domain.StatusDone && e.Day >= weekStart {
@@ -103,7 +103,7 @@ func habitLine(h domain.Habit, snap *store.Snapshot) string {
 	if h.Kind == domain.Quantified {
 		amount := 0.0
 		for _, e := range snap.Entries {
-			if e.HabitID == h.ID && e.Day == snap.Today {
+			if e.HabitID == h.ID && e.Day == snap.Day {
 				amount = e.Amount
 			}
 		}

@@ -121,7 +121,7 @@ type Glyphs struct {
 	Logo, Done, Pending, Partial, Week, Skip, Freeze, Pause, Milestone string
 	SelBar, HRule, TabRule, Shadow                                     string
 	BarOn, BarOff                                                      string
-	Edit, Focus, Prompt                                                string
+	Edit, Focus, Prompt, Backfill                                      string
 	Spark                                                              []rune // nil in ASCII mode: sparklines are omitted
 	Heat                                                               []rune
 }
@@ -133,7 +133,7 @@ func GlyphSet(ascii bool) Glyphs {
 			Skip: "-", Freeze: "#", Pause: "=", Milestone: "^",
 			SelBar: ">", HRule: "-", TabRule: "=", Shadow: ":",
 			BarOn: "#", BarOff: ".",
-			Edit: "*", Focus: "@", Prompt: ">",
+			Edit: "*", Focus: "@", Prompt: ">", Backfill: "<",
 			Heat: []rune(".-=%#"),
 		}
 	}
@@ -142,7 +142,7 @@ func GlyphSet(ascii bool) Glyphs {
 		Skip: "✕", Freeze: "❄", Pause: "‖", Milestone: "◆",
 		SelBar: "▌", HRule: "─", TabRule: "━", Shadow: "░",
 		BarOn: "▰", BarOff: "▱",
-		Edit: "✎", Focus: "◎", Prompt: "❯",
+		Edit: "✎", Focus: "◎", Prompt: "❯", Backfill: "↩",
 		Spark: []rune("▁▂▃▄▅▆▇█"),
 		Heat:  []rune("·░▒▓█"),
 	}

@@ -281,6 +281,207 @@ func TestFinalizePausedHabit(t *testing.T) {
 	}
 }
 
+// A habit created in the local evening lands on the NEXT calendar date in
+// UTC; the creation-day guard and ActiveOn must use the local date or every
+// same-day log is rejected for users west of UTC.
+func TestSetEntryAllowsSameDayForEveningCreatedHabit(t *testing.T) {
+	oldLocal := time.Local
+	time.Local = time.FixedZone("UTC-5", -5*3600)
+	t.Cleanup(func() { time.Local = oldLocal })
+
+	s := testStore(t)
+	today := s.Today()
+	d := today.Time() // UTC midnight of today's calendar date
+	created := time.Date(d.Year(), d.Month(), d.Day(), 20, 0, 0, 0, time.Local)
+	h := mustCreate(t, s, domain.Habit{Name: "Evening", CreatedAt: created.UTC()})
+	mustDone(t, s, h.ID, today) // must not be rejected as pre-creation
+}
+
+func TestBackfillRefundPlusEarnRespectsCap(t *testing.T) {
+	s := testStore(t)
+	today := s.Today()
+	h := mustCreate(t, s, domain.Habit{Name: "Meditate"})
+	// 19 dones ending two days ago (earns 1 at #10), topped up to the cap of 3.
+	for i := 0; i < 19; i++ {
+		mustDone(t, s, h.ID, today.AddDays(i-20))
+	}
+	if _, err := s.db.Exec(`INSERT INTO freeze_ledger (day, delta, habit_id, reason) VALUES (?, 2, ?, 'earned')`,
+		today.AddDays(-3), h.ID); err != nil {
+		t.Fatal(err)
+	}
+	metaSet(s.db, "last_finalized", string(today.AddDays(-2)))
+	if err := s.FinalizeThrough(today); err != nil {
+		t.Fatal(err)
+	}
+	if b := balance(t, s); b != 2 {
+		t.Fatalf("setup: balance = %d, want 2 (one auto-spent)", b)
+	}
+	// Backfilling the frozen day is the 20th done: refund (+1 → 3) plus an
+	// earn would breach FreezeCap — the earn must see the refunded balance.
+	// The refund and earn rows must also get DISTINCT ledger IDs: both were
+	// preallocated from MAX(id)+1 pre-commit, so the second INSERT OR REPLACE
+	// used to silently swallow the first.
+	mustDone(t, s, h.ID, today.AddDays(-1))
+	if b := balance(t, s); b != 3 {
+		t.Fatalf("balance = %d, want 3 (cap)", b)
+	}
+	var refunds, earns int
+	s.db.QueryRow(`SELECT COUNT(*) FROM freeze_ledger WHERE reason = 'refund'`).Scan(&refunds)
+	s.db.QueryRow(`SELECT COUNT(*) FROM freeze_ledger WHERE reason = 'earned' AND day = ?`, today.AddDays(-1)).Scan(&earns)
+	if refunds != 1 || earns != 0 {
+		t.Fatalf("refund rows = %d, earn rows on frozen day = %d; want 1, 0", refunds, earns)
+	}
+}
+
+func TestBackfillSkipOverFreezeKeepsTokenSpent(t *testing.T) {
+	s := testStore(t)
+	today := s.Today()
+	h := mustCreate(t, s, domain.Habit{Name: "Meditate"})
+	for i := 0; i < 10; i++ {
+		mustDone(t, s, h.ID, today.AddDays(i-11))
+	}
+	metaSet(s.db, "last_finalized", string(today.AddDays(-2)))
+	if err := s.FinalizeThrough(today); err != nil {
+		t.Fatal(err)
+	}
+	// Skip breaks the streak the token protected — no refund for that.
+	err := s.SetEntry(domain.Entry{HabitID: h.ID, Day: today.AddDays(-1),
+		Status: domain.StatusSkip, SkipReason: "tired", LoggedAt: time.Now(), Source: "cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := balance(t, s); b != 0 {
+		t.Fatalf("balance = %d, want 0 (token stays spent)", b)
+	}
+}
+
+func TestClearFreezeEntryRefundsToken(t *testing.T) {
+	s := testStore(t)
+	today := s.Today()
+	h := mustCreate(t, s, domain.Habit{Name: "Meditate"})
+	for i := 0; i < 10; i++ {
+		mustDone(t, s, h.ID, today.AddDays(i-11))
+	}
+	metaSet(s.db, "last_finalized", string(today.AddDays(-2)))
+	if err := s.FinalizeThrough(today); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearEntry(h.ID, today.AddDays(-1)); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := entryQ(s.db, h.ID, today.AddDays(-1)); e != nil {
+		t.Fatalf("freeze entry survived clear: %+v", e)
+	}
+	if b := balance(t, s); b != 1 {
+		t.Fatalf("balance = %d, want 1 (auto-spend undone with the entry)", b)
+	}
+	// Undo restores the freeze entry and takes the refund back.
+	if _, err := s.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := entryQ(s.db, h.ID, today.AddDays(-1)); e == nil || e.Status != domain.StatusFreeze {
+		t.Fatalf("undo did not restore freeze entry: %+v", e)
+	}
+	if b := balance(t, s); b != 0 {
+		t.Fatalf("balance after undo = %d, want 0", b)
+	}
+}
+
+func TestSetEntryRejectsFuture(t *testing.T) {
+	s := testStore(t)
+	h := mustCreate(t, s, domain.Habit{Name: "Meditate"})
+	err := s.SetEntry(domain.Entry{HabitID: h.ID, Day: s.Today().AddDays(1),
+		Status: domain.StatusDone, LoggedAt: time.Now(), Source: "cli"})
+	if err == nil {
+		t.Fatal("future entry accepted")
+	}
+}
+
+func TestSetEntryRejectsPreCreation(t *testing.T) {
+	s := testStore(t)
+	h := mustCreate(t, s, domain.Habit{Name: "Meditate", CreatedAt: time.Now()})
+	err := s.SetEntry(domain.Entry{HabitID: h.ID, Day: s.Today().AddDays(-1),
+		Status: domain.StatusDone, LoggedAt: time.Now(), Source: "cli"})
+	if err == nil {
+		t.Fatal("pre-creation entry accepted")
+	}
+}
+
+func TestBackfillStampsSource(t *testing.T) {
+	s := testStore(t)
+	today := s.Today()
+	h := mustCreate(t, s, domain.Habit{Name: "Meditate"})
+	mustDone(t, s, h.ID, today.AddDays(-1))
+	mustDone(t, s, h.ID, today)
+	if e, _ := entryQ(s.db, h.ID, today.AddDays(-1)); e == nil || e.Source != "backfill" {
+		t.Fatalf("backfilled entry source = %+v", e)
+	}
+	if e, _ := entryQ(s.db, h.ID, today); e == nil || e.Source != "cli" {
+		t.Fatalf("same-day entry source = %+v", e)
+	}
+}
+
+func TestBackfillRefundsAutoSpentFreeze(t *testing.T) {
+	s := testStore(t)
+	today := s.Today()
+	h := mustCreate(t, s, domain.Habit{Name: "Meditate"})
+	// 10 dones ending two days ago: 1 token banked, then auto-spent on the miss.
+	for i := 0; i < 10; i++ {
+		mustDone(t, s, h.ID, today.AddDays(i-11))
+	}
+	metaSet(s.db, "last_finalized", string(today.AddDays(-2)))
+	if err := s.FinalizeThrough(today); err != nil {
+		t.Fatal(err)
+	}
+	if b := balance(t, s); b != 0 {
+		t.Fatalf("setup: balance = %d, want 0", b)
+	}
+
+	// Backfill the frozen day as actually done: freeze wasn't needed.
+	mustDone(t, s, h.ID, today.AddDays(-1))
+	if e, _ := entryQ(s.db, h.ID, today.AddDays(-1)); e == nil || e.Status != domain.StatusDone {
+		t.Fatalf("freeze entry not replaced: %+v", e)
+	}
+	if b := balance(t, s); b != 1 {
+		t.Fatalf("token not refunded, balance = %d", b)
+	}
+	if st := streakOf(t, s, h.ID); st.Current != 11 {
+		t.Fatalf("streak = %+v, want 11", st)
+	}
+
+	// Undo returns the freeze entry AND takes the refund back.
+	if _, err := s.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := entryQ(s.db, h.ID, today.AddDays(-1)); e == nil || e.Status != domain.StatusFreeze {
+		t.Fatalf("undo did not restore freeze entry: %+v", e)
+	}
+	if b := balance(t, s); b != 0 {
+		t.Fatalf("undo did not revert refund, balance = %d", b)
+	}
+}
+
+func TestBackfillResurrectsStreak(t *testing.T) {
+	s := testStore(t)
+	today := s.Today()
+	h := mustCreate(t, s, domain.Habit{Name: "Journal"})
+	// 3 dones ending two days ago: streak dies on the missed day (no token).
+	for i := 0; i < 3; i++ {
+		mustDone(t, s, h.ID, today.AddDays(i-4))
+	}
+	metaSet(s.db, "last_finalized", string(today.AddDays(-2)))
+	if err := s.FinalizeThrough(today); err != nil {
+		t.Fatal(err)
+	}
+	if st := streakOf(t, s, h.ID); st.Current != 0 {
+		t.Fatalf("setup: streak = %+v, want dead", st)
+	}
+	mustDone(t, s, h.ID, today.AddDays(-1))
+	if st := streakOf(t, s, h.ID); st.Current != 4 {
+		t.Fatalf("streak after backfill = %+v, want 4", st)
+	}
+}
+
 func TestConcurrentReadWhileWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	writer, err := Open(path, DefaultOpts())
@@ -306,7 +507,7 @@ func TestConcurrentReadWhileWrite(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 30; i++ {
-		if _, err := reader.Snapshot(); err != nil {
+		if _, err := reader.Snapshot(reader.Today()); err != nil {
 			t.Errorf("concurrent read: %v", err)
 		}
 	}

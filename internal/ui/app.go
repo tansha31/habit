@@ -60,9 +60,10 @@ type (
 )
 
 type App struct {
-	store *store.Store
-	snap  *store.Snapshot
-	day   domain.Day
+	store   *store.Store
+	snap    *store.Snapshot
+	day     domain.Day // real logical today
+	viewDay domain.Day // day the dashboard shows/edits; == day unless time-traveling
 
 	tab      Tab
 	dash     dashModel
@@ -115,6 +116,7 @@ func Run(s *store.Store, cfg config.Config) error {
 	app := &App{
 		store:   s,
 		day:     s.Today(),
+		viewDay: s.Today(),
 		keys:    Keys,
 		changes: changes,
 		confCh:  confCh,
@@ -193,9 +195,9 @@ func watchDB(path string) (<-chan struct{}, func(), error) {
 // ---- commands ----
 
 func (a *App) loadSnap() tea.Cmd {
-	s := a.store
+	s, day := a.store, a.viewDay
 	return func() tea.Msg {
-		snap, err := s.Snapshot()
+		snap, err := s.Snapshot(day)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -226,17 +228,34 @@ func minuteTick() tea.Cmd {
 }
 
 func (a *App) rolloverCmd() tea.Cmd {
-	s := a.store
+	s, day := a.store, a.viewDay
 	return func() tea.Msg {
 		if err := s.FinalizeThrough(s.Today()); err != nil {
 			return errMsg{err}
 		}
-		snap, err := s.Snapshot()
+		snap, err := s.Snapshot(day)
 		if err != nil {
 			return errMsg{err}
 		}
 		return snapMsg{snap}
 	}
+}
+
+// rolloverIfNeeded advances the logical day once midnight (rollover hour)
+// passes — from the minute tick AND from snapMsg, so a reload that lands
+// before the tick can't strand a.day ahead of viewDay with the rollover
+// check permanently disarmed. Skipped while writes are queued (the reload
+// would clobber optimistic state, per ui.md); the next tick retries.
+func (a *App) rolloverIfNeeded() tea.Cmd {
+	t := a.store.Today()
+	if t == a.day || a.pending.Load() > 0 {
+		return nil
+	}
+	if a.viewDay == a.day {
+		a.viewDay = t // follow the rollover unless time-traveling
+	}
+	a.day = t
+	return a.rolloverCmd()
 }
 
 // undoCmd goes through the same worker, enqueued in Update order — rapid
@@ -296,10 +315,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case snapMsg:
+		if msg.snap.Day != a.viewDay {
+			return a, nil // stale: the user shifted days again mid-flight
+		}
 		a.snap = msg.snap
-		a.day = msg.snap.Today
 		a.dash.rebuild(a)
-		return a, nil
+		return a, a.rolloverIfNeeded()
 
 	case storeChangedMsg:
 		if a.pending.Load() > 0 {
@@ -343,10 +364,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case minuteMsg:
-		if a.store.Today() != a.day {
-			return a, tea.Batch(a.rolloverCmd(), minuteTick())
-		}
-		return a, minuteTick()
+		return a, tea.Batch(a.rolloverIfNeeded(), minuteTick())
 
 	case toastExpiredMsg:
 		if msg.gen == a.toastGen {

@@ -579,6 +579,9 @@ func newDayDetail(a *App, day domain.Day) *dayDetailOverlay {
 		if e.Note != "" {
 			detail += "  " + th.Faint.Render(e.Note)
 		}
+		if e.Source == "backfill" {
+			detail += "  " + th.Faint.Render(gl.Backfill+" backfilled")
+		}
 		o.rows = append(o.rows, fmt.Sprintf("%s  %-20s %s", glyphFor[e.Status], h.Name, th.Dim.Render(detail)))
 	}
 	if len(o.rows) == 0 {

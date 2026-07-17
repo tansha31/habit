@@ -59,6 +59,20 @@ func TestResetLogs(t *testing.T) {
 	}
 }
 
+func TestResetAllClearsFrecency(t *testing.T) {
+	s := testStore(t)
+	mustCreate(t, s, domain.Habit{Name: "Meditate"})
+	if err := s.MetaSet("frecency", `{"toggle:meditate":{"c":19,"l":1}}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reset(ResetAll); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.MetaGet("frecency"); got != "" {
+		t.Fatalf("frecency survived reset --all: %q", got)
+	}
+}
+
 func TestResetAll(t *testing.T) {
 	s := testStore(t)
 	today := s.Today()
@@ -85,7 +99,7 @@ func TestResetAll(t *testing.T) {
 		t.Fatalf("groups after full reset = %d, err %v", len(groups), err)
 	}
 	// A fresh snapshot still loads cleanly.
-	if _, err := s.Snapshot(); err != nil {
+	if _, err := s.Snapshot(s.Today()); err != nil {
 		t.Fatalf("snapshot after full reset: %v", err)
 	}
 }
