@@ -161,7 +161,7 @@ func (p *paletteOverlay) commandItems(a *App, q string) []palItem {
 		}},
 		{gl.Prompt, "quit", "q", "cmd:quit", func(a *App) tea.Cmd { return tea.Quit }},
 	}
-	for _, name := range theme.Names() {
+	for _, name := range append([]string{"auto"}, theme.Names()...) {
 		n := name
 		cmds = append(cmds, palItem{gl.Prompt, "theme " + n, "", "cmd:theme:" + n, func(a *App) tea.Cmd {
 			cfg := a.conf

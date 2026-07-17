@@ -76,6 +76,7 @@ type App struct {
 	gl     theme.Glyphs
 	border lipgloss.Border
 	keys   KeyMap
+	darkBG bool // terminal background, from BackgroundColorMsg; drives theme="auto"
 
 	toastText string
 	toastGen  int
@@ -121,6 +122,7 @@ func Run(s *store.Store, cfg config.Config) error {
 		changes: changes,
 		confCh:  confCh,
 		mutCh:   mutCh,
+		darkBG:  true, // assume dark until the terminal answers — matches the dark default
 	}
 	app.applyConfig(cfg)
 	_, err = tea.NewProgram(app).Run()
@@ -131,7 +133,15 @@ func Run(s *store.Store, cfg config.Config) error {
 // truth: theme, glyphs, borders, and store options.
 func (a *App) applyConfig(cfg config.Config) {
 	a.conf = cfg
-	t, err := theme.Load(cfg.Theme, cfg.Accent)
+	name := cfg.Theme
+	if name == "auto" { // resolved against the detected terminal background
+		if a.darkBG {
+			name = "tokyo-night"
+		} else {
+			name = "tokyo-night-day"
+		}
+	}
+	t, err := theme.Load(name, cfg.Accent)
 	if err != nil {
 		t = theme.Default()
 	}
@@ -289,7 +299,7 @@ func (a *App) Toast(text string) tea.Cmd {
 // ---- tea.Model ----
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(a.loadSnap(), waitChange(a.changes), waitConf(a.confCh), minuteTick())
+	return tea.Batch(a.loadSnap(), waitChange(a.changes), waitConf(a.confCh), minuteTick(), tea.RequestBackgroundColor)
 }
 
 // waitConf mirrors waitChange for the config file (§5.5: external edits
@@ -312,6 +322,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.w, a.h = msg.Width, msg.Height
+		return a, nil
+
+	case tea.BackgroundColorMsg:
+		if dark := msg.IsDark(); dark != a.darkBG {
+			a.darkBG = dark
+			a.applyConfig(a.conf)
+		}
 		return a, nil
 
 	case snapMsg:
