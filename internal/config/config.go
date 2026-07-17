@@ -26,7 +26,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		Theme:          "tokyo-night",
+		Theme:          "auto", // light/dark default picked from the terminal background
 		Background:     "terminal",
 		Borders:        "rounded",
 		RolloverHour:   3,

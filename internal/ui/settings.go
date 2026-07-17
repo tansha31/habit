@@ -77,10 +77,15 @@ func (m *setModel) items(a *App) []setItem {
 	}
 	return []setItem{
 		{section: "APPEARANCE", label: "theme",
-			render: func(a *App) string { return cyc(a.conf.Theme) },
+			render: func(a *App) string {
+				if a.conf.Theme == "auto" {
+					return cyc("auto · " + a.theme.Name)
+				}
+				return cyc(a.conf.Theme)
+			},
 			change: func(a *App, dir int) tea.Cmd {
 				cfg := a.conf
-				cfg.Theme = cycle(theme.Names(), cfg.Theme, dir)
+				cfg.Theme = cycle(append([]string{"auto"}, theme.Names()...), cfg.Theme, dir)
 				return m.changed(a, cfg)
 			}},
 		{label: "accent",
