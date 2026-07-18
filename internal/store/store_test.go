@@ -3,6 +3,7 @@ package store
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -553,5 +554,57 @@ func TestEnsureGroup(t *testing.T) {
 	last := groups[len(groups)-1]
 	if len(groups) != 4 || last.Name != "Workout" || last.Builtin || last.Position != 4 {
 		t.Fatalf("groups: got %+v", groups)
+	}
+}
+
+func TestDuplicateNamesAcrossGroups(t *testing.T) {
+	s := testStore(t)
+
+	// Same name in different groups: allowed, slugs deduped globally.
+	a := mustCreate(t, s, domain.Habit{Name: "Reading", GroupID: 1})
+	b := mustCreate(t, s, domain.Habit{Name: "Reading", GroupID: 2})
+	c := mustCreate(t, s, domain.Habit{Name: "Reading", GroupID: 3})
+	if a.Slug != "reading" || b.Slug != "reading-2" || c.Slug != "reading-3" {
+		t.Fatalf("slugs: got %q %q %q", a.Slug, b.Slug, c.Slug)
+	}
+	for _, want := range []domain.Habit{a, b, c} {
+		got, err := s.HabitBySlug(want.Slug)
+		if err != nil || got == nil || got.ID != want.ID {
+			t.Fatalf("HabitBySlug(%q): got %+v, err %v", want.Slug, got, err)
+		}
+	}
+
+	// Same name in the same group: rejected, case-insensitively.
+	for _, name := range []string{"Reading", "reading", "READING!"} {
+		h := domain.Habit{Name: name, GroupID: 1, Kind: domain.Check, Schedule: domain.Daily}
+		if err := s.CreateHabit(&h); err == nil {
+			t.Fatalf("create %q in group 1: want error, got nil", name)
+		} else if !strings.Contains(err.Error(), "Morning") {
+			t.Fatalf("error should name the group: %v", err)
+		}
+	}
+
+	// Rename to a sibling's name: rejected.
+	d := mustCreate(t, s, domain.Habit{Name: "Writing", GroupID: 1})
+	d.Name = "Reading"
+	if err := s.UpdateHabit(d); err == nil {
+		t.Fatal("rename to sibling name: want error, got nil")
+	}
+
+	// Move into a group already holding the name: rejected.
+	b.GroupID = 1
+	if err := s.UpdateHabit(b); err == nil {
+		t.Fatal("move into colliding group: want error, got nil")
+	}
+
+	// A rename that only changes case of itself is fine (selfID excluded).
+	d.Name = "writing"
+	if err := s.UpdateHabit(d); err != nil {
+		t.Fatalf("self rename: %v", err)
+	}
+
+	// Undo removes the last suffixed create like any other op.
+	if _, err := s.Undo(); err != nil { // undoes d's rename
+		t.Fatal(err)
 	}
 }
