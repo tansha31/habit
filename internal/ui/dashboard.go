@@ -590,14 +590,15 @@ func (d *dashModel) view(a *App) string {
 	if total > 0 {
 		frac = float64(done) / float64(total)
 	}
-	label := "Today"
+	label := th.Text.Render("Today")
 	if a.viewDay != a.day {
 		ago := domain.DaysBetween(a.viewDay, a.day)
 		label = th.Warn.Render(fmt.Sprintf("%s · %dd ago", a.viewDay.Time().Format("Mon · Jan 2"), ago)) +
 			th.Dim.Render(" · t today")
 	}
-	summary := fmt.Sprintf("   %s · %d of %d   %s  %2.0f%%",
-		label, done, total, th.Accent.Render(widgets.Bar(frac, 21, gl.BarOn, gl.BarOff)), frac*100)
+	summary := "   " + label + th.Text.Render(fmt.Sprintf(" · %d of %d   ", done, total)) +
+		th.Accent.Render(widgets.Bar(frac, 21, gl.BarOn, gl.BarOff)) +
+		th.Text.Render(fmt.Sprintf("  %2.0f%%", frac*100))
 	if d.filterTag != "" {
 		summary += "   " + th.Accent.Render("#"+d.filterTag)
 	}
@@ -781,7 +782,7 @@ func (o skipOverlay) View(a *App) string {
 	for _, c := range skipChoices {
 		b.WriteString(fmt.Sprintf("  %s  %s\n", th.Accent.Render(c.key), th.Dim.Render(c.label)))
 	}
-	b.WriteString("\n" + th.Faint.Render("esc cancel"))
+	b.WriteString("\n" + th.Dim.Render("esc cancel"))
 	box := lipgloss.NewStyle().
 		Border(a.border).BorderForeground(th.AccentColor).
 		Padding(0, 2).Render(b.String())

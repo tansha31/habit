@@ -9,9 +9,11 @@ import (
 	"embed"
 	"fmt"
 	"image/color"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -72,6 +74,56 @@ func Names() []string {
 	return out
 }
 
+// relLum is WCAG relative luminance of a #rrggbb color.
+func relLum(hex string) float64 {
+	lin := func(s string) float64 {
+		v, _ := strconv.ParseUint(s, 16, 8)
+		c := float64(v) / 255
+		if c <= 0.03928 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	if len(hex) != 7 {
+		return 0
+	}
+	return 0.2126*lin(hex[1:3]) + 0.7152*lin(hex[3:5]) + 0.0722*lin(hex[5:7])
+}
+
+func contrast(a, b string) float64 {
+	la, lb := relLum(a), relLum(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// legible blends hex toward black (light bg) or white (dark bg) until it
+// reaches min contrast against bg, keeping the hue. An accent chosen for the
+// opposite polarity (e.g. a dark-theme pastel on paper) stays recognizable
+// instead of washing out.
+func legible(hex, bg string, min float64) string {
+	if len(hex) != 7 || len(bg) != 7 || contrast(hex, bg) >= min {
+		return hex
+	}
+	target := 0.0 // blend toward black on a light bg
+	if relLum(bg) < 0.5 {
+		target = 255 // toward white on a dark bg
+	}
+	ch := func(s string, t float64) float64 {
+		v, _ := strconv.ParseUint(s, 16, 8)
+		return float64(v) + (target-float64(v))*t
+	}
+	for t := 0.05; t <= 1; t += 0.05 {
+		mixed := fmt.Sprintf("#%02x%02x%02x",
+			int(ch(hex[1:3], t)), int(ch(hex[3:5], t)), int(ch(hex[5:7], t)))
+		if contrast(mixed, bg) >= min {
+			return mixed
+		}
+	}
+	return hex // degenerate bg (mid-gray); leave it alone
+}
+
 // Load resolves a theme by name — user dir first, then bundled. accent
 // overrides the palette accent when non-empty (§3.5).
 func Load(name, accent string) (Theme, error) {
@@ -88,6 +140,7 @@ func Load(name, accent string) (Theme, error) {
 	if accent != "" {
 		p.Accent = accent
 	}
+	p.Accent = legible(p.Accent, p.Bg, 3.0) // §3.4: accent must never wash out
 	c := func(hex string) color.Color { return lipgloss.Color(hex) }
 	fg := func(hex string) lipgloss.Style { return lipgloss.NewStyle().Foreground(c(hex)) }
 	return Theme{

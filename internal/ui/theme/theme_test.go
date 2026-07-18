@@ -1,41 +1,13 @@
 package theme
 
 import (
-	"math"
-	"strconv"
+	"fmt"
+	"image/color"
 	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
 )
-
-// lum is WCAG relative luminance of a #rrggbb color.
-func lum(t *testing.T, hex string) float64 {
-	t.Helper()
-	lin := func(s string) float64 {
-		v, err := strconv.ParseUint(s, 16, 8)
-		if err != nil {
-			t.Fatalf("bad hex %q: %v", hex, err)
-		}
-		c := float64(v) / 255
-		if c <= 0.03928 {
-			return c / 12.92
-		}
-		return math.Pow((c+0.055)/1.055, 2.4)
-	}
-	if len(hex) != 7 || hex[0] != '#' {
-		t.Fatalf("bad hex %q", hex)
-	}
-	return 0.2126*lin(hex[1:3]) + 0.7152*lin(hex[3:5]) + 0.0722*lin(hex[5:7])
-}
-
-func contrast(t *testing.T, a, b string) float64 {
-	la, lb := lum(t, a), lum(t, b)
-	if la < lb {
-		la, lb = lb, la
-	}
-	return (la + 0.05) / (lb + 0.05)
-}
 
 // TestBundledThemesParseAndContrast guards against "washed out" palettes: every
 // bundled theme must keep its foreground roles legible against its own bg.
@@ -77,7 +49,7 @@ func TestBundledThemesParseAndContrast(t *testing.T) {
 				"accent": 2.0, "ok": 2.0, "warn": 2.0, "danger": 2.0, "freeze": 2.0,
 			}
 			for tok, want := range min {
-				if got := contrast(t, fields[tok], p.Bg); got < want {
+				if got := contrast(fields[tok], p.Bg); got < want {
 					t.Errorf("%s: contrast(%s %s, bg %s) = %.2f, want ≥ %.1f",
 						name, tok, fields[tok], p.Bg, got, want)
 				}
@@ -86,5 +58,37 @@ func TestBundledThemesParseAndContrast(t *testing.T) {
 				t.Errorf("Load(%s): %v", name, err)
 			}
 		})
+	}
+}
+
+func hexOf(c color.Color) string {
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
+}
+
+// TestAccentOverrideStaysLegible: any accent override — including every
+// Settings preset, all of which are dark-theme pastels — must land at ≥3:1
+// against every bundled theme's bg after Load's legibility clamp.
+func TestAccentOverrideStaysLegible(t *testing.T) {
+	// Mirrors ui.accentPresets (settings.go); "" = theme default.
+	presets := []string{"", "#7aa2f7", "#bb9af7", "#9ece6a", "#f7768e", "#e0af68", "#7dcfff", "#fe8019"}
+	entries, _ := bundled.ReadDir("themes")
+	for _, e := range entries {
+		name := strings.TrimSuffix(e.Name(), ".toml")
+		data, _ := bundled.ReadFile("themes/" + e.Name())
+		var p palette
+		if err := toml.Unmarshal(data, &p); err != nil {
+			t.Fatal(err)
+		}
+		for _, preset := range presets {
+			th, err := Load(name, preset)
+			if err != nil {
+				t.Fatalf("Load(%s, %q): %v", name, preset, err)
+			}
+			if got := contrast(hexOf(th.AccentColor), p.Bg); got < 3.0 {
+				t.Errorf("%s accent %q → %s: contrast vs bg %s = %.2f, want ≥ 3.0",
+					name, preset, hexOf(th.AccentColor), p.Bg, got)
+			}
+		}
 	}
 }

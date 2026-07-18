@@ -47,7 +47,7 @@ type frecEntry struct {
 }
 
 func newPalette(a *App) *paletteOverlay {
-	p := &paletteOverlay{input: ti("", 40), frec: map[string]frecEntry{}}
+	p := &paletteOverlay{input: ti(a.theme, "", 40), frec: map[string]frecEntry{}}
 	p.input.Prompt = a.theme.Accent.Render(a.gl.Prompt + " ")
 	p.input.Focus()
 	if raw := a.store.MetaGet("frecency"); raw != "" {
@@ -348,7 +348,7 @@ func (p *paletteOverlay) View(a *App) string {
 			style = th.Text
 		}
 		label := style.Render(ansi.Truncate(it.label, w-16, "…"))
-		hint := th.Faint.Render(it.hint)
+		hint := th.Dim.Render(it.hint)
 		// Rows must fit the content width (box width minus the border).
 		pad := (w - 2) - 5 - lipgloss.Width(label) - lipgloss.Width(hint)
 		if pad < 1 {
@@ -356,7 +356,7 @@ func (p *paletteOverlay) View(a *App) string {
 		}
 		b.WriteString(fmt.Sprintf("%s %s  %s%s%s\n", bar, style.Render(it.icon), label, strings.Repeat(" ", pad), hint))
 	}
-	b.WriteString("\n" + th.Faint.Render(fmt.Sprintf(" %d matches · ↑↓ select · ↵ run · esc close", len(p.items))))
+	b.WriteString("\n" + th.Dim.Render(fmt.Sprintf(" %d matches · ↑↓ select · ↵ run · esc close", len(p.items))))
 
 	box := lipgloss.NewStyle().
 		Border(a.border).BorderForeground(th.AccentColor).
