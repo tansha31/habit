@@ -71,12 +71,13 @@ type App struct {
 	set      setModel
 	overlays []Overlay
 
-	conf   config.Config
-	theme  theme.Theme
-	gl     theme.Glyphs
-	border lipgloss.Border
-	keys   KeyMap
-	darkBG bool // terminal background, from BackgroundColorMsg; drives theme="auto"
+	conf    config.Config
+	theme   theme.Theme
+	gl      theme.Glyphs
+	border  lipgloss.Border
+	keys    KeyMap
+	darkBG  bool // terminal background, from BackgroundColorMsg; drives theme="auto"
+	bgKnown bool // terminal answered OSC 11; gates solid paint under theme="auto"
 
 	toastText string
 	toastGen  int
@@ -325,6 +326,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.BackgroundColorMsg:
+		a.bgKnown = true
 		if dark := msg.IsDark(); dark != a.darkBG {
 			a.darkBG = dark
 			a.applyConfig(a.conf)
@@ -532,8 +534,14 @@ func (a *App) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
-	if a.conf.Background == "solid" {
+	// Solid mode redefines the terminal's default bg AND fg: unstyled runs
+	// (and text after an embedded SGR reset) must land on theme colors, not
+	// whatever the terminal profile happens to use. Under theme="auto" wait
+	// for the OSC 11 answer first — painting rewrites the very color the
+	// detection queries, which would lock auto to the startup guess.
+	if a.conf.Background == "solid" && (a.conf.Theme != "auto" || a.bgKnown) {
 		v.BackgroundColor = a.theme.Bg
+		v.ForegroundColor = a.theme.Text.GetForeground()
 	}
 	return v
 }
@@ -558,7 +566,7 @@ func (a *App) render() string {
 // the active tab, and the logical date — one line, no border (§5.1).
 func (a *App) headerView() string {
 	th, gl := a.theme, a.gl
-	row := "  " + th.Accent.Render(gl.Logo) + " habit          "
+	row := "  " + th.Accent.Render(gl.Logo) + th.Text.Render(" habit") + "          "
 	underline := strings.Repeat(" ", lipgloss.Width(row))
 	for i, name := range tabNames {
 		a.tabX[i] = [2]int{lipgloss.Width(row), lipgloss.Width(row) + len(name)}

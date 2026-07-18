@@ -13,6 +13,7 @@ import (
 
 	"habit/internal/domain"
 	"habit/internal/store"
+	"habit/internal/ui/theme"
 	"habit/internal/ui/widgets"
 )
 
@@ -45,9 +46,18 @@ const (
 	fCount
 )
 
-func ti(value string, width int) textinput.Model {
+// ti builds a theme-styled input: the bubbles defaults are dark-terminal
+// hardcodes (white text) that vanish on a light theme.
+func ti(th theme.Theme, value string, width int) textinput.Model {
 	m := textinput.New()
 	m.Prompt = ""
+	s := textinput.DefaultDarkStyles()
+	s.Focused.Text = th.Text
+	s.Blurred.Text = th.Dim
+	s.Focused.Placeholder = th.Dim
+	s.Blurred.Placeholder = th.Dim
+	s.Cursor.Color = th.AccentColor
+	m.SetStyles(s)
 	m.SetWidth(width)
 	m.SetValue(value)
 	return m
@@ -60,13 +70,13 @@ func newEditor(a *App, h *domain.Habit) *editorOverlay {
 		sched:  domain.Daily,
 		groups: a.snap.Groups,
 	}
-	e.name = ti("", 28)
-	e.target = ti("", 8)
-	e.unit = ti("", 8)
-	e.perweek = ti("3", 4)
-	e.tags = ti("", 28)
-	e.reminder = ti("", 8)
-	e.group = ti("", 28)
+	e.name = ti(a.theme, "", 28)
+	e.target = ti(a.theme, "", 8)
+	e.unit = ti(a.theme, "", 8)
+	e.perweek = ti(a.theme, "3", 4)
+	e.tags = ti(a.theme, "", 28)
+	e.reminder = ti(a.theme, "", 8)
+	e.group = ti(a.theme, "", 28)
 	if h != nil {
 		e.kind, e.sched = h.Kind, h.Schedule
 		e.name.SetValue(h.Name)
@@ -339,7 +349,7 @@ func (e *editorOverlay) View(a *App) string {
 	}
 	row("")
 	if e.group.Value() != "" {
-		row(label(fGroup, "Group") + e.group.View() + " " + th.Faint.Render("(new group)"))
+		row(label(fGroup, "Group") + e.group.View() + " " + th.Dim.Render("(new group)"))
 	} else {
 		groupName := "—"
 		if len(e.groups) > 0 {
@@ -349,14 +359,14 @@ func (e *editorOverlay) View(a *App) string {
 		hint := ""
 		if e.focus == fGroup {
 			gStyle = th.Accent
-			hint = " " + th.Faint.Render("type to create")
+			hint = " " + th.Dim.Render("type to create")
 		}
 		row(label(fGroup, "Group") + gStyle.Render("‹ "+groupName+" ›") + hint)
 	}
 	row(label(fTags, "Tags") + e.tags.View())
-	row(label(fReminder, "Reminder") + e.reminder.View() + "   " + th.Faint.Render("requires habitd"))
+	row(label(fReminder, "Reminder") + e.reminder.View() + "   " + th.Dim.Render("requires habitd"))
 	row("")
-	footer := th.Faint.Render("esc cancel") + strings.Repeat(" ", 18) + th.Accent.Render("↵ save")
+	footer := th.Dim.Render("esc cancel") + strings.Repeat(" ", 18) + th.Accent.Render("↵ save")
 	if e.errTxt != "" {
 		footer = th.Danger.Render(e.errTxt)
 	}

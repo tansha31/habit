@@ -577,10 +577,10 @@ func newDayDetail(a *App, day domain.Day) *dayDetailOverlay {
 			detail = "(" + e.SkipReason + ")"
 		}
 		if e.Note != "" {
-			detail += "  " + th.Faint.Render(e.Note)
+			detail += "  " + th.Dim.Render(e.Note)
 		}
 		if e.Source == "backfill" {
-			detail += "  " + th.Faint.Render(gl.Backfill+" backfilled")
+			detail += "  " + th.Dim.Render(gl.Backfill+" backfilled")
 		}
 		o.rows = append(o.rows, fmt.Sprintf("%s  %-20s %s", glyphFor[e.Status], h.Name, th.Dim.Render(detail)))
 	}
@@ -605,7 +605,7 @@ func (o *dayDetailOverlay) View(a *App) string {
 	for _, r := range o.rows {
 		b.WriteString("  " + r + "\n")
 	}
-	b.WriteString("\n" + th.Faint.Render("  esc close"))
+	b.WriteString("\n" + th.Dim.Render("  esc close"))
 	box := lipgloss.NewStyle().
 		Border(a.border).BorderForeground(th.AccentColor).
 		Padding(0, 1).Render(strings.TrimRight(b.String(), "\n"))

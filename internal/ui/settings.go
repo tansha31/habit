@@ -93,7 +93,10 @@ func (m *setModel) items(a *App) []setItem {
 				if a.conf.Accent == "" {
 					return cyc("theme default")
 				}
-				return cyc(a.theme.Accent.Render("▓ ") + a.conf.Accent)
+				// Not cyc(): nesting a styled swatch inside Text.Render
+				// leaves the hex after the embedded reset unstyled.
+				return th.Dim.Render("‹ ") + a.theme.Accent.Render("▓ ") +
+					th.Text.Render(a.conf.Accent) + th.Dim.Render(" ›")
 			},
 			change: func(a *App, dir int) tea.Cmd {
 				cfg := a.conf
@@ -183,7 +186,7 @@ func (m *setModel) items(a *App) []setItem {
 			render: func(a *App) string { return th.Dim.Render(shortenHome(config.Path())) }},
 		{label: "export",
 			render: func(a *App) string {
-				return th.Dim.Render("› json   › csv") + "   " + th.Faint.Render("space runs json, l runs csv")
+				return th.Dim.Render("› json   › csv") + "   " + th.Dim.Render("space runs json, l runs csv")
 			},
 			change: func(a *App, dir int) tea.Cmd {
 				if dir > 0 {
@@ -304,7 +307,7 @@ func (m *setModel) view(a *App) string {
 		}
 		row := fmt.Sprintf("   %s %s%s", bar, padTo(labelStyle.Render(it.label), 16), it.render(a))
 		if it.note != "" {
-			row = padTo(row, 58) + th.Faint.Render(it.note)
+			row = padTo(row, 58) + th.Dim.Render(it.note)
 		}
 		lines = append(lines, row)
 	}
@@ -368,7 +371,7 @@ func (o *resetOverlay) View(a *App) string {
 		b.WriteString(th.Text.Render("Reset data") + "\n\n")
 		b.WriteString(fmt.Sprintf("  %s  %s\n", th.Accent.Render("l"), th.Dim.Render("clear logged data (keep habits)")))
 		b.WriteString(fmt.Sprintf("  %s  %s\n", th.Accent.Render("d"), th.Dim.Render("delete everything (habits + logs)")))
-		b.WriteString("\n" + th.Faint.Render("esc cancel"))
+		b.WriteString("\n" + th.Dim.Render("esc cancel"))
 	} else {
 		what := "all logged data"
 		if o.mode == store.ResetAll {
@@ -376,7 +379,7 @@ func (o *resetOverlay) View(a *App) string {
 		}
 		b.WriteString(th.Danger.Render("Delete "+what+"?") + "\n\n")
 		b.WriteString(th.Dim.Render("This cannot be undone.") + "\n\n")
-		b.WriteString(fmt.Sprintf("  %s confirm   %s", th.Danger.Render("y"), th.Faint.Render("esc cancel")))
+		b.WriteString(fmt.Sprintf("  %s confirm   %s", th.Danger.Render("y"), th.Dim.Render("esc cancel")))
 	}
 	box := lipgloss.NewStyle().
 		Border(a.border).BorderForeground(th.AccentColor).
