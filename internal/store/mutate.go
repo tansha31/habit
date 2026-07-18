@@ -281,8 +281,20 @@ func (s *Store) CreateHabit(h *domain.Habit) error {
 	if h.CreatedAt.IsZero() {
 		h.CreatedAt = time.Now().UTC()
 	}
-	if err := s.checkSlugFree(h.Slug, 0); err != nil {
+	if err := s.checkNameFree(h.Name, h.GroupID, 0); err != nil {
 		return err
+	}
+	// Slugs stay globally unique (CLI identity, frecency keys, UNIQUE column):
+	// the same name in another group gets reading-2, reading-3, …
+	for base, n := h.Slug, 2; ; n++ {
+		taken, err := s.slugTaken(h.Slug, 0)
+		if err != nil {
+			return err
+		}
+		if !taken {
+			break
+		}
+		h.Slug = fmt.Sprintf("%s-%d", base, n)
 	}
 	// ponytail: MAX+1 preallocation is safe — SQLite allows one writer at a
 	// time and mutate() runs in a single transaction.
@@ -302,6 +314,9 @@ func (s *Store) UpdateHabit(h domain.Habit) error {
 		return fmt.Errorf("no habit with id %d", h.ID)
 	}
 	if err := s.checkSlugFree(h.Slug, h.ID); err != nil {
+		return err
+	}
+	if err := s.checkNameFree(h.Name, h.GroupID, h.ID); err != nil {
 		return err
 	}
 	desc := "edit " + h.Slug
@@ -331,14 +346,49 @@ func (s *Store) SwapPositions(a, b domain.Habit) error {
 // REPLACE, which would silently swallow an existing habit on a slug
 // collision instead of erroring.
 func (s *Store) checkSlugFree(slug string, selfID int64) error {
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM habit WHERE slug = ? AND id != ?`, slug, selfID).Scan(&n); err != nil {
+	taken, err := s.slugTaken(slug, selfID)
+	if err != nil {
 		return err
 	}
-	if n > 0 {
+	if taken {
 		return fmt.Errorf("a habit with slug %q already exists", slug)
 	}
 	return nil
+}
+
+func (s *Store) slugTaken(slug string, selfID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM habit WHERE slug = ? AND id != ?`, slug, selfID).Scan(&n)
+	return n > 0, err
+}
+
+// checkNameFree scopes name uniqueness to a group: two habits may share a
+// name across groups (slugs get deduped), never within one. Normalized via
+// Slugify so "Reading" vs "reading!" collide; archived habits still count.
+func (s *Store) checkNameFree(name string, groupID, selfID int64) error {
+	want := domain.Slugify(name)
+	rows, err := s.db.Query(`SELECT h.name, h.archived_at IS NOT NULL, g.name
+		FROM habit h JOIN grp g ON g.id = h.group_id
+		WHERE h.group_id = ? AND h.id != ?`, groupID, selfID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var hname, gname string
+		var archived bool
+		if err := rows.Scan(&hname, &archived, &gname); err != nil {
+			return err
+		}
+		if domain.Slugify(hname) == want {
+			note := ""
+			if archived {
+				note = " (archived)"
+			}
+			return fmt.Errorf("a habit named %q already exists in group %q%s", name, gname, note)
+		}
+	}
+	return rows.Err()
 }
 
 func nextID(q dbq, table string) int64 {
